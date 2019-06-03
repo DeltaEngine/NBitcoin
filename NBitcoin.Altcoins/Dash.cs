@@ -4,6 +4,7 @@ using NBitcoin.Protocol;
 using System;
 using System.IO;
 using System.Linq;
+using NBitcoin.RPC;
 
 namespace NBitcoin.Altcoins
 {
@@ -310,6 +311,22 @@ namespace NBitcoin.Altcoins
 		{
 			public uint DashVersion => Version & 0xffff;
 			public DashTransactionType DashType => (DashTransactionType)((Version >> 16) & 0xffff);
+
+			/// <summary>
+			/// Checks if a transaction was instantly confirmed and locked in by the masternode network (txlock=true or if
+			/// the node tells us instantlock or chainlock is true, in any of those cases the tx is confirmed and can be used).
+			/// We can't check this from the tx hex data, but need to ask the node and check the json response.
+			/// </summary>
+			public static bool IsInstantSend(uint256 txId, RPCClient client)
+			{
+				var json = client?.SendCommand(new RPCRequest(RPCOperations.getrawtransaction, new object[] {txId, 1}));
+				if (json?.Result != null)
+					return json.Result.Value<bool>("instantlock") == true ||
+					       json.Result.Value<bool>("instantlock_internal") == true ||
+					       json.Result.Value<bool>("chainlock") == true;
+				return false;
+			}
+
 			public byte[] ExtraPayload = new byte[0];
 			public ProviderRegistrationTransaction ProRegTx =>
 				DashType == DashTransactionType.MasternodeRegistration
