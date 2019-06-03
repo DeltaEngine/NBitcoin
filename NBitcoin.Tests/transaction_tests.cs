@@ -14,6 +14,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 
@@ -149,13 +150,13 @@ namespace NBitcoin.Tests
 			var secret = new BitcoinSecret("KyJTjvFpPF6DDX4fnT56d2eATPfxjdUPXFFUb85psnCdh34iyXRQ");
 
 			var tx = Network.CreateTransaction();
-			var p2pkh = tx.Outputs.Add(new Money((UInt64)45000000), secret.GetAddress());
+			var p2pkh = tx.Outputs.Add(new Money((UInt64)45000000), secret.GetAddress(ScriptPubKeyType.Legacy));
 			var p2pk = tx.Outputs.Add(new Money((UInt64)80000000), secret.PrivateKey.PubKey);
 
 			Assert.False(p2pkh.IsTo(secret.PrivateKey.PubKey));
-			Assert.True(p2pkh.IsTo(secret.GetAddress()));
+			Assert.True(p2pkh.IsTo(secret.GetAddress(ScriptPubKeyType.Legacy)));
 			Assert.True(p2pk.IsTo(secret.PrivateKey.PubKey));
-			Assert.False(p2pk.IsTo(secret.GetAddress()));
+			Assert.False(p2pk.IsTo(secret.GetAddress(ScriptPubKeyType.Legacy)));
 		}
 
 		[Fact]
@@ -318,6 +319,45 @@ namespace NBitcoin.Tests
 			builder.SetChange(p2sh);
 			var signedTx = builder.BuildTransaction(true);
 			Assert.True(builder.Verify(signedTx));
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanOptInRBF()
+		{
+			var k = new Key();
+			var address = k.PubKey.WitHash.GetAddress(Network.Main);
+			var coins = new []{ RandomCoin(Money.Coins(10), k.ScriptPubKey, false) };
+
+			TransactionBuilder builder = Network.CreateTransactionBuilder();
+			builder.AddCoins(coins);
+			builder.AddKeys(k);
+			builder.Send(new Key().ScriptPubKey, Money.Coins(1));
+			builder.SendFees(Money.Coins(0.001m));
+			builder.SetChange(address);
+			builder.OptInRBF = true;
+			var tx = builder.BuildTransaction(false);
+			Assert.True(tx.RBF);
+			foreach(var inp in tx.Inputs)
+			{
+				Assert.True(inp.Sequence.IsRBF);
+			}
+
+			builder = Network.CreateTransactionBuilder();
+			builder.AddCoins(coins);
+			builder.AddKeys(k);
+			builder.Send(new Key().ScriptPubKey, Money.Coins(1));
+			builder.SendFees(Money.Coins(0.001m));
+			builder.SetChange(address);
+			builder.OptInRBF = true;
+			builder.SetLockTime(1230944461);
+			tx = builder.BuildTransaction(false);
+			Assert.True(tx.RBF);
+			foreach(var inp in tx.Inputs)
+			{
+				Assert.True(inp.Sequence.IsRBF);
+			}
+			Assert.True(tx.LockTime.IsTimeLock);
 		}
 
 		private Coin[] GetCoins(BitcoinScriptAddress p2sh)
@@ -1216,7 +1256,7 @@ namespace NBitcoin.Tests
 		}
 		private Coin RandomCoin(Money amount, Key receiver)
 		{
-			return RandomCoin(amount, receiver.PubKey.GetAddress(Network.Main));
+			return RandomCoin(amount, receiver.PubKey.GetAddress(ScriptPubKeyType.Legacy, Network.Main));
 		}
 		private Coin RandomCoin(Money amount, IDestination receiver)
 		{
@@ -1556,8 +1596,8 @@ namespace NBitcoin.Tests
 			transactionBuilder.AddCoins(new Coin(new OutPoint(uint256.Parse("75425c904289f21feef0cffab2081ba22030b633623115adf0780edad443e6c7"), 5), new TxOut("0.00246414", PayToScriptHashTemplate.Instance.GenerateScriptPubKey(redeem).GetDestinationAddress(Network.Main))).ToScriptCoin(redeem));
 			transactionBuilder.AddCoins(new Coin(new OutPoint(uint256.Parse("75425c904289f21feef0cffab2081ba22030b633623115adf0780edad443e6c7"), 6), new TxOut("0.00250980", PayToScriptHashTemplate.Instance.GenerateScriptPubKey(redeem).GetDestinationAddress(Network.Main))).ToScriptCoin(redeem));
 			transactionBuilder.AddCoins(new Coin(new OutPoint(uint256.Parse("75425c904289f21feef0cffab2081ba22030b633623115adf0780edad443e6c7"), 7), new TxOut("0.01000000", PayToScriptHashTemplate.Instance.GenerateScriptPubKey(redeem).GetDestinationAddress(Network.Main))).ToScriptCoin(redeem));
-			transactionBuilder.Send(new Key().PubKey.GetAddress(Network.Main), "0.01000000");
-			transactionBuilder.SetChange(new Key().PubKey.GetAddress(Network.Main));
+			transactionBuilder.Send(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, Network.Main), "0.01000000");
+			transactionBuilder.SetChange(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, Network.Main));
 
 			var feeRate = new FeeRate((long)32563);
 			var estimatedFeeBefore = transactionBuilder.EstimateFees(feeRate);
@@ -1593,18 +1633,48 @@ namespace NBitcoin.Tests
 		public void CanBuildWithKnownSignatures()
 		{
 			var k = new Key();
+			var k2 = new Key();
 			var tx = Network.CreateTransaction();
 
 			var coin = new Coin(new OutPoint(Rand(), 0), new TxOut(Money.Coins(1.0m), k.PubKey.Hash));
+			var unsignableCoin = new Coin(new OutPoint(Rand(), 0), new TxOut(Money.Coins(1.0m), k2.PubKey.Hash));
 			tx.Inputs.Add(new TxIn(coin.Outpoint));
+			tx.Inputs.Add(new TxIn(unsignableCoin.Outpoint));
 			var signature = tx.SignInput(k, coin);
 
 			var txBuilder = Network.CreateTransactionBuilder();
 			txBuilder.AddCoins(coin);
-			txBuilder.AddKnownSignature(k.PubKey, signature);
+			txBuilder.AddKnownSignature(k.PubKey, signature, coin.Outpoint);
+			Assert.True(txBuilder.TrySignInput(tx, 0, SigHash.All, out var sig));
+			Assert.Equal(signature, sig);
+
+			Assert.False(txBuilder.TrySignInput(tx, 1, SigHash.All, out _));
+			txBuilder.AddCoins(coin, unsignableCoin);
+			Assert.False(txBuilder.TrySignInput(tx, 1, SigHash.All, out _));
+
+			txBuilder.AddKnownSignature(k2.PubKey, TransactionSignature.Empty, unsignableCoin.Outpoint);
+			Assert.True(txBuilder.TrySignInput(tx, 1, SigHash.All, out sig));
+			Assert.Equal(TransactionSignature.Empty, sig);
+
 			txBuilder.SignTransactionInPlace(tx);
 
 			Assert.True(tx.Inputs.AsIndexedInputs().First().VerifyScript(coin));
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void AssertDogeHasAMinimumOf1DogeFee()
+		{
+			var k = new Key();
+			var txBuilder = Altcoins.Dogecoin.Instance.Regtest.CreateTransactionBuilder();
+			txBuilder.AddKeys(k);
+			txBuilder.AddCoins(RandomCoin(Money.Coins(10m), k.PubKey.Hash));
+			txBuilder.Send(new Key().ScriptPubKey, Money.Coins(4));
+			txBuilder.SetChange(new Key().ScriptPubKey);
+			txBuilder.SendFees(Money.Coins(0.0001m));
+			var signed = txBuilder.BuildPSBT(true);
+			signed.TryGetFee(out var fee);
+			Assert.Equal(fee, Money.Coins(1.0m));
 		}
 
 		[Fact]
@@ -1660,7 +1730,23 @@ namespace NBitcoin.Tests
 				)).ToList();
 			var a = witCoins.Select(c => c.Amount).Sum();
 			var allCoins = coins.Concat(scriptCoins).Concat(witCoins).ToArray();
-			var destinations = keys.Select(k => k.PubKey.GetAddress(Network.Main)).ToArray();
+
+			// Let's create a fake funding Tx with all those coins
+			Transaction fundingTx = Transaction.Create(Network.Main);
+			fundingTx.Inputs.Add(new OutPoint(Rand(), 0), Script.Empty);
+			foreach (var c in allCoins)
+			{
+				fundingTx.Outputs.Add(c.TxOut);
+			}
+			// Let's fix the outpoints of the coins
+			var fundingTxHash = fundingTx.GetHash();
+			for (int i = 0; i < allCoins.Length; i++)
+			{
+				allCoins[i].Outpoint = new OutPoint(fundingTxHash, i);
+			}
+			///////////
+			///
+			var destinations = keys.Select(k => k.PubKey.GetAddress(ScriptPubKeyType.Legacy, Network.Main)).ToArray();
 
 			var txBuilder = Network.CreateTransactionBuilder(0);
 			txBuilder.StandardTransactionPolicy = EasyPolicy;
@@ -1674,7 +1760,21 @@ namespace NBitcoin.Tests
 				.SendFees(Money.Parse("0.0001"))
 				.SetChange(destinations[3])
 				.BuildTransaction(true);
+			Assert.False(tx.RBF);
 			Assert.True(txBuilder.Verify(tx, "0.0001"));
+
+			// Let's check if PSBT can be finalized
+			var psbt = txBuilder.BuildPSBT(true);
+			Assert.All(psbt.Inputs, input => input.PartialSigs.Any()); // All inputs should have partial sigs
+			Assert.False(psbt.IsAllFinalized());
+			psbt.TryFinalize(out _);
+			Assert.False(psbt.IsAllFinalized()); // Non segwit transactions need the previous tx
+			psbt.AddTransactions(fundingTx);
+			psbt.TryFinalize(out _);
+			Assert.True(psbt.IsAllFinalized()); // All signed!
+			Assert.True(psbt.CanExtractTransaction());
+			Assert.True(txBuilder.Verify(psbt.ExtractTransaction(), "0.0001"));
+			// OK PSBT is finalized
 
 			//Verify that we can detect malleability
 			txBuilder.StandardTransactionPolicy = EasyPolicy.Clone();
@@ -1721,25 +1821,25 @@ namespace NBitcoin.Tests
 			Assert.False(txBuilder.Verify(tx, "0.0001"));
 
 			var partiallySigned = tx.Clone();
-
 			txBuilder = Network.CreateTransactionBuilder(0);
-			tx = txBuilder
+			partiallySigned = txBuilder
 					.AddKeys(keys[0])
 					.AddCoins(allCoins)
 					.SignTransaction(tx);
-			Assert.True(txBuilder.Verify(tx));
+			Assert.True(txBuilder.Verify(partiallySigned));
 
+			//Trying with known signature
+			partiallySigned = tx.Clone();
 			txBuilder = Network.CreateTransactionBuilder(0)
 						.AddCoins(allCoins);
-			//Trying with known signature
 			foreach(var coin in allCoins)
 			{
 				var sig = partiallySigned.SignInput(keys[0], coin);
-				txBuilder.AddKnownSignature(keys[0].PubKey, sig);
+				txBuilder.AddKnownSignature(keys[0].PubKey, sig, coin.Outpoint);
 			}
-			tx = txBuilder
+			partiallySigned = txBuilder
 				.SignTransaction(partiallySigned);
-			Assert.True(txBuilder.Verify(tx));
+			Assert.True(txBuilder.Verify(partiallySigned));
 
 			//Test if signing separately
 			txBuilder = Network.CreateTransactionBuilder(0);
@@ -2421,6 +2521,7 @@ namespace NBitcoin.Tests
 		[Fact]
 		public void Play()
         {
+
 		}
 
 		protected virtual BigInteger CalculateE(BigInteger n, byte[] message)

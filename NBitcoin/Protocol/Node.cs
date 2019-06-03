@@ -74,7 +74,7 @@ namespace NBitcoin.Protocol
 				return false;
 			if(capabilities.PeerTooOld)
 				return false;
-			if(MinProtocolCapabilities == null)
+			if(MinProtocolCapabilities is null)
 				return true;
 
 			if(SupportSPV)
@@ -255,8 +255,8 @@ namespace NBitcoin.Protocol
 					}
 					finally
 					{
-						evt.Dispose();
-						ar.Dispose();
+						evt?.Dispose();
+						ar?.Dispose();
 					}
 
 					if(processing != null)
@@ -585,7 +585,7 @@ namespace NBitcoin.Protocol
 						break;
 					}
 					addr = addrman.Select();
-					if(addr == null)
+					if(addr is null)
 					{
 						parameters.ConnectCancellation.WaitHandle.WaitOne(1000);
 						break;
@@ -600,7 +600,7 @@ namespace NBitcoin.Protocol
 					}
 					break;
 				}
-				if(addr == null)
+				if(addr is null)
 					continue;
 				try
 				{
@@ -634,7 +634,7 @@ namespace NBitcoin.Protocol
 		public static Node ConnectToLocal(Network network,
 								NodeConnectionParameters parameters)
 		{
-			return Connect(network, Utils.ParseIpEndpoint("localhost", network.DefaultPort), parameters);
+			return Connect(network, Utils.ParseEndpoint("localhost", network.DefaultPort), parameters);
 		}
 
 		public static Node ConnectToLocal(Network network,
@@ -653,7 +653,7 @@ namespace NBitcoin.Protocol
 		public static Node Connect(Network network,
 								 string endpoint, NodeConnectionParameters parameters)
 		{
-			return Connect(network, Utils.ParseIpEndpoint(endpoint, network.DefaultPort), parameters);
+			return Connect(network, Utils.ParseEndpoint(endpoint, network.DefaultPort), parameters);
 		}
 
 		public static Node Connect(Network network,
@@ -662,31 +662,95 @@ namespace NBitcoin.Protocol
 								bool isRelay = true,
 								CancellationToken cancellation = default(CancellationToken))
 		{
-			return Connect(network, Utils.ParseIpEndpoint(endpoint, network.DefaultPort), myVersion, isRelay, cancellation);
+			return Connect(network, Utils.ParseEndpoint(endpoint, network.DefaultPort), myVersion, isRelay, cancellation);
 		}
 
 		public static Node Connect(Network network,
 							 NetworkAddress endpoint,
 							 NodeConnectionParameters parameters)
 		{
-			return new Node(endpoint, network, parameters);
+			return ConnectAsync(network, endpoint?.Endpoint, endpoint, parameters).GetAwaiter().GetResult();
 		}
 
 		public static Node Connect(Network network,
-							 IPEndPoint endpoint,
+							 EndPoint endpoint,
 							 NodeConnectionParameters parameters)
 		{
-			var peer = new NetworkAddress()
-			{
-				Time = DateTimeOffset.UtcNow,
-				Endpoint = endpoint
-			};
+			return ConnectAsync(network, endpoint, parameters).GetAwaiter().GetResult();
+		}
 
-			return new Node(peer, network, parameters);
+		public static Task<Node> ConnectAsync(Network network, EndPoint endpoint, NodeConnectionParameters parameters = null)
+		{
+			return ConnectAsync(network, endpoint, null, parameters);
+		}
+		public static Task<Node> ConnectAsync(Network network, string endpoint, NodeConnectionParameters parameters = null)
+		{
+			if (network is null)
+				throw new ArgumentNullException(nameof(network));
+			return ConnectAsync(network, Utils.ParseEndpoint(endpoint, network.DefaultPort), null, parameters);
+		}
+
+		public static async Task<Node> ConnectAsync(Network network, EndPoint endpoint, NetworkAddress peer, NodeConnectionParameters parameters)
+		{
+			if (endpoint is null && peer is null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (network is null)
+				throw new ArgumentNullException(nameof(network));
+			if (endpoint is null)
+			{
+				endpoint = peer.Endpoint;
+			}
+
+			if (endpoint is null)
+				throw new ArgumentNullException(nameof(endpoint));
+
+			parameters = parameters ?? new NodeConnectionParameters();
+			var addrman = AddressManagerBehavior.GetAddrman(parameters);
+
+			var socket = new Socket(SocketType.Stream, ProtocolType.Tcp);
+			parameters.SocketSettings.SetSocketProperties(socket);
+			try
+			{
+				await parameters.EndpointConnector.ConnectSocket(socket, endpoint, parameters, parameters.ConnectCancellation).ConfigureAwait(false);
+				var expectedPeerEndpoint = (endpoint as IPEndPoint) ?? endpoint.AsOnionCatIPEndpoint() ?? (socket.RemoteEndPoint as IPEndPoint);
+				if (peer is null)
+				{
+					peer = new NetworkAddress()
+					{
+						Time = DateTimeOffset.UtcNow,
+						Endpoint = expectedPeerEndpoint
+					};
+					peer.Endpoint = expectedPeerEndpoint;
+				}
+				else if (!expectedPeerEndpoint.MapToIPv6Ex().Equals(peer.Endpoint))
+				{
+					throw new ArgumentException("The peer's endpoint that you provided is different from the endpoint eventually connected to");
+				}
+			}
+			catch (OperationCanceledException)
+			{
+				Utils.SafeCloseSocket(socket);
+				Logs.NodeServer.LogInformation("Connection to node cancelled");
+				if (addrman != null && peer != null && peer.Endpoint != null)
+					addrman.Attempt(peer);
+				throw;
+			}
+			catch (Exception ex)
+			{
+				Utils.SafeCloseSocket(socket);
+				Logs.NodeServer.LogError(default, ex, "Error connecting to the remote endpoint");
+				if (addrman != null && peer != null && peer.Endpoint != null)
+					addrman.Attempt(peer);
+				throw;
+			}
+
+			var destinationEndpoint = endpoint.AsOnionCatIPEndpoint() ?? ((IPEndPoint)socket.RemoteEndPoint);
+			Node node = new Node(peer, network, parameters, socket, null);
+			return node;
 		}
 
 		public static Node Connect(Network network,
-								 IPEndPoint endpoint,
+								 EndPoint endpoint,
 								 uint? myVersion = null,
 								bool isRelay = true,
 								CancellationToken cancellation = default(CancellationToken))
@@ -700,81 +764,6 @@ namespace NBitcoin.Protocol
 			});
 		}
 
-		internal Node(NetworkAddress peer, Network network, NodeConnectionParameters parameters)
-		{
-			parameters = parameters ?? new NodeConnectionParameters();
-			var addrman = AddressManagerBehavior.GetAddrman(parameters);
-			Inbound = false;
-			_Behaviors = new NodeBehaviorsCollection(this);
-			_MyVersion = parameters.CreateVersion(peer.Endpoint, network);
-			Network = network;
-			SetVersion(_MyVersion.Version);
-			_Peer = peer;
-			LastSeen = peer.Time;
-
-			var socket = new Socket(AddressFamily.InterNetworkV6, SocketType.Stream, ProtocolType.Tcp);
-			socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
-
-			_Connection = new NodeConnection(this, socket);
-			socket.ReceiveBufferSize = parameters.ReceiveBufferSize;
-			socket.SendBufferSize = parameters.SendBufferSize;
-			
-			using (Logs.NodeServer.BeginScope("Node"))
-
-			{
-				try
-				{
-					var completed = new ManualResetEvent(false);
-					var args = new SocketAsyncEventArgs();
-					args.RemoteEndPoint = peer.Endpoint;
-					args.Completed += (s, a) =>
-					{
-						Utils.SafeSet(completed);
-					};
-					if(!socket.ConnectAsync(args))
-						completed.Set();
-					WaitHandle.WaitAny(new WaitHandle[] { completed, parameters.ConnectCancellation.WaitHandle });
-					parameters.ConnectCancellation.ThrowIfCancellationRequested();
-					if(args.SocketError != SocketError.Success)
-						throw new SocketException((int)args.SocketError);
-					var remoteEndpoint = (IPEndPoint)(socket.RemoteEndPoint ?? args.RemoteEndPoint);
-					_RemoteSocketAddress = remoteEndpoint.Address;
-					_RemoteSocketEndpoint = remoteEndpoint;
-					_RemoteSocketPort = remoteEndpoint.Port;
-					State = NodeState.Connected;
-					ConnectedAt = DateTimeOffset.UtcNow;
-					Logs.NodeServer.LogInformation("Outbound connection successful");
-					if(addrman != null)
-						addrman.Attempt(Peer);
-				}
-				catch(OperationCanceledException)
-				{
-					Utils.SafeCloseSocket(socket);
-					Logs.NodeServer.LogInformation("Connection to node cancelled");
-					State = NodeState.Offline;
-					if(addrman != null)
-						addrman.Attempt(Peer);
-					throw;
-				}
-				catch(Exception ex)
-				{
-					Utils.SafeCloseSocket(socket);
-					Logs.NodeServer.LogError(default, ex,"Error connecting to the remote endpoint");
-					DisconnectReason = new NodeDisconnectReason()
-					{
-						Reason = "Unexpected exception while connecting to socket",
-						Exception = ex
-					};
-					State = NodeState.Failed;
-					if(addrman != null)
-						addrman.Attempt(Peer);
-					throw;
-				}
-				InitDefaultBehaviors(parameters);
-				_Connection.BeginListen();
-			}
-		}
-
 		private void SetVersion(uint version)
 		{
 			Version = version;
@@ -783,16 +772,16 @@ namespace NBitcoin.Protocol
 
 		internal Node(NetworkAddress peer, Network network, NodeConnectionParameters parameters, Socket socket, VersionPayload peerVersion)
 		{
-			_RemoteSocketAddress = ((IPEndPoint)socket.RemoteEndPoint).Address;
-			_RemoteSocketEndpoint = ((IPEndPoint)socket.RemoteEndPoint);
-			_RemoteSocketPort = ((IPEndPoint)socket.RemoteEndPoint).Port;
-			Inbound = true;
+			_RemoteSocketAddress = peer.Endpoint.Address;
+			_RemoteSocketEndpoint = peer.Endpoint;
+			_RemoteSocketPort = peer.Endpoint.Port;
+			_Peer = peer;
+			Inbound = peerVersion != null;
+			Network = network;
 			_Behaviors = new NodeBehaviorsCollection(this);
 			_MyVersion = parameters.CreateVersion(peer.Endpoint, network);
-			if(peerVersion == null)
-				SetVersion((uint)_MyVersion.Version);
-			Network = network;
-			_Peer = peer;
+			if (peerVersion is null)
+				SetVersion((uint)_MyVersion.Version);			
 			_Connection = new NodeConnection(this, socket);
 			_PeerVersion = peerVersion;
 			if(peerVersion != null)
@@ -802,7 +791,7 @@ namespace NBitcoin.Protocol
 
 			LastSeen = peer.Time;
 			ConnectedAt = DateTimeOffset.UtcNow;
-			Logs.NodeServer.LogInformation("Connected to advertised node {endpoint}", _Peer.Endpoint);
+			Logs.NodeServer.LogInformation("Connected to node {endpoint} (inbound: {inbound})", _Peer.Endpoint, Inbound);
 			State = NodeState.Connected;
 
 			InitDefaultBehaviors(parameters);
@@ -818,8 +807,8 @@ namespace NBitcoin.Protocol
 			}
 		}
 
-		IPEndPoint _RemoteSocketEndpoint;
-		public IPEndPoint RemoteSocketEndpoint
+		EndPoint _RemoteSocketEndpoint;
+		public EndPoint RemoteSocketEndpoint
 		{
 			get
 			{
@@ -891,10 +880,15 @@ namespace NBitcoin.Protocol
 		/// <param name="System.OperationCanceledException">The node has been disconnected</param>
 		public Task SendMessageAsync(Payload payload)
 		{
-			if(payload == null)
+			if(payload is null)
 				throw new ArgumentNullException(nameof(payload));
+
+#if NO_RCA
 			TaskCompletionSource<bool> completion = new TaskCompletionSource<bool>();
-			if(!IsConnected)
+#else
+			TaskCompletionSource<bool> completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+#endif
+			if (!IsConnected)
 			{
 				completion.SetException(new OperationCanceledException("The peer has been disconnected"));
 				return completion.Task;
@@ -939,7 +933,7 @@ namespace NBitcoin.Protocol
 		{
 			get
 			{
-				if(_Counter == null)
+				if(_Counter is null)
 					_Counter = new PerformanceCounter();
 				return _Counter;
 			}
@@ -1130,7 +1124,7 @@ namespace NBitcoin.Protocol
 
 			State = NodeState.Disconnecting;
 			_Connection.Cancel.Cancel();
-			if(DisconnectReason == null)
+			if(DisconnectReason is null)
 				DisconnectReason = new NodeDisconnectReason()
 				{
 					Reason = reason,
@@ -1253,7 +1247,7 @@ namespace NBitcoin.Protocol
 				while(true)
 				{
 					//Get before last so, at the end, we should only receive 1 header equals to this one (so we will not have race problems with concurrent GetChains)
-					var awaited = currentTip.Previous == null ? currentTip.GetLocator() : currentTip.Previous.GetLocator();
+					var awaited = currentTip.Previous is null ? currentTip.GetLocator() : currentTip.Previous.GetLocator();
 					SendMessageAsync(new GetHeadersPayload()
 					{
 						BlockLocators = awaited,
@@ -1378,7 +1372,7 @@ namespace NBitcoin.Protocol
 		/// <returns>Task which finish when complete</returns>
 		public void SynchronizeSlimChain(SlimChain chain, uint256 hashStop = null, CancellationToken cancellationToken = default(CancellationToken))
 		{
-			if(chain == null)
+			if(chain is null)
 				throw new ArgumentNullException(nameof(chain));
 			AssertState(NodeState.HandShaked, cancellationToken);
 
@@ -1391,8 +1385,8 @@ namespace NBitcoin.Protocol
 					var currentTip = chain.TipBlock;
 
 					//Get before last so, at the end, we should only receive 1 header equals to this one (so we will not have race problems with concurrent GetChains)
-					var awaited = currentTip.Previous == null ? chain.GetLocator(currentTip.Height) : chain.GetLocator(currentTip.Height - 1);
-					if(awaited == null)
+					var awaited = currentTip.Previous is null ? chain.GetLocator(currentTip.Height) : chain.GetLocator(currentTip.Height - 1);
+					if(awaited is null)
 						continue;
 					SendMessageAsync(new GetHeadersPayload()
 					{

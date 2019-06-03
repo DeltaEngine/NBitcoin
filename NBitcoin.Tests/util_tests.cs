@@ -9,7 +9,10 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace NBitcoin.Tests
@@ -81,6 +84,90 @@ namespace NBitcoin.Tests
 
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
+		public void CanGetAccountKeyPath()
+		{
+			Assert.Equal(new KeyPath(), new KeyPath().GetAddressKeyPath());
+			Assert.Equal(new KeyPath("1"), new KeyPath("1").GetAddressKeyPath());
+			Assert.Equal(new KeyPath(), new KeyPath("1'/2'").GetAddressKeyPath());
+			Assert.Equal(new KeyPath("3/4"), new KeyPath("1'/2'/3/4").GetAddressKeyPath());
+			Assert.Equal(new KeyPath("0/1"), new KeyPath("49'/0'/0'/0/1").GetAddressKeyPath());
+
+			Assert.Equal(new KeyPath(), new KeyPath().GetAccountKeyPath());
+			Assert.Equal(new KeyPath(), new KeyPath("1").GetAccountKeyPath());
+			Assert.Equal(new KeyPath("1'/2'"), new KeyPath("1'/2'").GetAccountKeyPath());
+			Assert.Equal(new KeyPath("1'/2'"), new KeyPath("1'/2'/3/4").GetAccountKeyPath());
+			Assert.Equal(new KeyPath("49'/0'/0'"), new KeyPath("49'/0'/0'/0/1").GetAccountKeyPath());
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanParseKeyPath()
+		{
+			var valid = new[] 
+			{
+				"",
+				"m",
+				"m/0h",
+				"m/0'",
+				"m/0'/1",
+				"m/0/1",
+				"m/0h",
+				"m/0h",
+				"m/0h/1",
+				"m/0/1",
+				$"m/{uint.MaxValue}/1",
+				$"m/{0x80000000u - 1}h",
+				$"m/{0x80000000u - 1}"
+			}.ToList();
+			var invalid = new[]
+			{
+				$"m/{((long)uint.MaxValue) + 1}/1",
+				$"k/0/1",
+				$"h/1",
+				$"m/'/1",
+				$"m/'/1",
+				$"m/{0x80000000u}h"
+			}.ToList();
+			var maxKeypath = new KeyPath(new uint[255]);
+			Assert.Throws<ArgumentException>(() => new KeyPath(new uint[256]));
+			valid.Add(maxKeypath.ToString());
+			valid.Add("m/" + maxKeypath.ToString());
+			invalid.Add("m/" + maxKeypath.ToString() + "/0");
+			foreach (var v in valid)
+			{
+				KeyPath.Parse(v);
+				Assert.True(KeyPath.TryParse(v, out _));
+			}
+			foreach (var v in invalid)
+			{
+				Assert.Throws<FormatException>(() => KeyPath.Parse(v));
+				Assert.False(KeyPath.TryParse(v, out _));
+			}
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanParseRootedKeyPath()
+		{
+			var root = new BitcoinExtKey("tprv8ZgxMBicQKsPdXCKLrSbPbmWWCmwZwU6x9pQKyafAP76SpYnPy9tEMbsTgJ3rPPqvu1ZkM5Xz6w7v9rhvrHYUuPfQu2vu9YNwAxseujuABx", Network.RegTest);
+			Assert.True(RootedKeyPath.TryParse("7b09d780/0'/0'/2'", out var result));
+			Assert.Equal(root.GetPublicKey().GetHDFingerPrint(), result.MasterFingerprint);
+			Assert.Equal("7b09d780/0'/0'/2'", result.ToString());
+			Assert.Equal("7b09d780/0'/0'/2'/0/1", result.Derive(new KeyPath("0/1")).ToString());
+			Assert.Equal("7b09d780/0'/0'/2'/2", result.Derive(2).ToString());
+			Assert.Equal("7b09d780/0'/0'/2'", result.Derive(new KeyPath("0/1")).GetAccountKeyPath().ToString());
+			Assert.Equal("7b09d780", result.MasterFingerprint.ToString());
+			Assert.True(RootedKeyPath.TryParse("7b09d780/", out result));
+			Assert.Equal("7b09d780", result.MasterFingerprint.ToString());
+			Assert.Equal("7b09d780/", result.ToString());
+			Assert.Equal(new KeyPath(), result.KeyPath);
+
+			Assert.True(RootedKeyPath.TryParse(result.ToString(), out var result2));
+			Assert.Equal(result, result2);
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
 		public void CanCalculateGoestlcoinTransactionHash()
 		{
 			var bs = new BitcoinStream(Encoders.Hex.DecodeData("020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff03510101ffffffff0200002cd6e21500002321023035994e950a694cd81e0384abc1850cfe3e541a9de9706ca669d21c61548f8bac0000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000"));
@@ -125,7 +212,7 @@ namespace NBitcoin.Tests
 
 
 			//Test .ToNetwork()
-			var addr = pubkey.GetAddress(Network.Main);
+			var addr = pubkey.GetAddress(ScriptPubKeyType.Legacy, Network.Main);
 			Assert.Equal("16UwLL9Risc3QfPqBUvKofHmBQ7wMtjvM", addr.ToString());
 			Assert.Equal("mfcSEPR8EkJrpX91YkTJ9iscdAzppJrG9j", addr.ToNetwork(Network.TestNet).ToString());
 
@@ -143,6 +230,22 @@ namespace NBitcoin.Tests
 			var addr1 = new BitcoinWitPubKeyAddress("tb1qr5d68t6qm8t2n7ch4nph3ha4prztteuw98ewda", Network.TestNet);
 			var addr2 = new BitcoinWitPubKeyAddress("tb1qr5d68t6qm8t2n7ch4nph3ha4prztteuw98ewda");
 			Assert.Equal(addr1, addr2);
+
+			var extKey = new BitcoinExtKey(new ExtKey(), Network.Main);
+			var segwit = extKey.AsHDScriptPubKey(ScriptPubKeyType.Segwit).ScriptPubKey.GetDestinationAddress(Network.Main);
+			var segwit2 = extKey.ExtKey.AsHDScriptPubKey(ScriptPubKeyType.Segwit).ScriptPubKey.GetDestinationAddress(Network.Main);
+			Assert.Equal(segwit, segwit2);
+			Assert.IsType<NBitcoin.BitcoinWitPubKeyAddress>(segwit);
+			var segwitP2SH = extKey.AsHDScriptPubKey(ScriptPubKeyType.SegwitP2SH).ScriptPubKey.GetDestinationAddress(Network.Main);
+			var segwit2P2SH = extKey.ExtKey.AsHDScriptPubKey(ScriptPubKeyType.SegwitP2SH).ScriptPubKey.GetDestinationAddress(Network.Main);
+			Assert.Equal(segwitP2SH, segwit2P2SH);
+			Assert.IsType<NBitcoin.BitcoinScriptAddress>(segwitP2SH);
+			var legacy = extKey.AsHDScriptPubKey(ScriptPubKeyType.Legacy).ScriptPubKey.GetDestinationAddress(Network.Main);
+			var legacy2 = extKey.ExtKey.AsHDScriptPubKey(ScriptPubKeyType.Legacy).ScriptPubKey.GetDestinationAddress(Network.Main);
+			var legacy3 = extKey.Neuter().AsHDScriptPubKey(ScriptPubKeyType.Legacy).ScriptPubKey.GetDestinationAddress(Network.Main);
+			Assert.Equal(legacy, legacy2);
+			Assert.Equal(legacy, legacy3);
+			Assert.IsType<NBitcoin.BitcoinPubKeyAddress>(legacy);
 		}
 
 		[Fact]
@@ -536,7 +639,28 @@ namespace NBitcoin.Tests
 			fee = new FeeRate(0.521748274m);
 			Assert.Equal("0.521 Sat/B", fee.ToString());
 		}
+#if !NO_SOCKET
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public async Task CanConvertEndpointToIPEndpoint()
+		{
+			var localIp = (await Dns.GetHostAddressesAsync("localhost")).First();
+			var data = new (string Input, string ExpectedOutput)[]
+			{
+				( "FD87:D87E:EB43:edb1:8e4:3588:e546:35ca", "fd87:d87e:eb43:edb1:8e4:3588:e546:35ca" ),
+				( "5wyqrzbvrdsumnok.onion", "fd87:d87e:eb43:edb1:8e4:3588:e546:35ca" ),
+				( "10.10.1.3", "10.10.1.3"),
+				( "localhost", localIp.ToString())
+			};
 
+			foreach(var test in data)
+			{
+				var endpoint = Utils.ParseEndpoint(test.Input, 10);
+				var result = (await endpoint.ResolveToIPEndpointsAsync()).First();
+				Assert.Equal(test.ExpectedOutput + ":10", result.ToEndpointString().Replace("[", "").Replace("]", ""));
+			}
+		}
+#endif
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
 		public void FeeRateComparison()
@@ -618,6 +742,39 @@ namespace NBitcoin.Tests
 
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
+		public void CanUseHDCache()
+		{
+			var k = new ExtKey();
+			var cache = (HDKeyCache)k.AsHDKeyCache();
+			var actual = cache.Derive(0);
+			var expected = k.Derive(0);
+			Assert.Equal(expected.GetPublicKey(), actual.GetPublicKey());
+			actual = cache.Derive(0);
+			Assert.Equal(expected.GetPublicKey(), actual.GetPublicKey());
+
+			actual = actual.Derive(0);
+			expected = k.Derive(new KeyPath("0/0"));
+			Assert.Equal(expected.GetPublicKey(), actual.GetPublicKey());
+
+			actual = k.AsHDKeyCache().Derive(new KeyPath("0/0"));
+			expected = k.Derive(new KeyPath("0/0"));
+			Assert.Equal(expected.GetPublicKey(), actual.GetPublicKey());
+
+			actual = actual.Derive(new KeyPath("0/0"));
+			expected = k.Derive(new KeyPath("0/0/0/0"));
+			Assert.Equal(expected.GetPublicKey(), actual.GetPublicKey());
+
+
+			var baseKeyPath = new KeyPath("0/0/0/0/1/2/3/4");
+			var keypaths = Enumerable.Range(0, 20).Select(i => baseKeyPath.Derive((uint)i)).ToArray();
+			cache = (HDKeyCache)k.AsHDKeyCache();
+			var result = cache.Derive(keypaths);
+			Assert.Equal(k.Derive(baseKeyPath.Derive(19U)).GetPublicKey(), result[19].GetPublicKey());
+			Assert.Equal(8 + 20, cache.Cached);
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
 		public void CanConvertBigIntegerToBytes()
 		{
 			CanConvertBigIntegerToBytesCore(BigInteger.Zero, new byte[0]);
@@ -680,6 +837,48 @@ namespace NBitcoin.Tests
 				var secret = pubKey.GetSharedPubkey(key);
 				Assert.Equal(test.ExpectedSecret, Encoders.Hex.EncodeData(Hashes.SHA256(secret.ToBytes())));
 			}
+		}
+
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanEncryptAndDecryptMessages()
+		{
+			var key = GetKeyFromPassword("my-little-passwrod");
+
+			var msgs = new byte[][]{
+				new byte[555],
+				Encoders.ASCII.DecodeData("Chancellor on the brink of second bailout for banks")
+			};
+			foreach(var plainText in msgs)
+			{
+				var cipherText1 = key.PubKey.Encrypt(plainText);
+				var cipherText2 = key.PubKey.Encrypt(plainText);
+				var text1 = key.Decrypt(cipherText1);
+				var text2 = key.Decrypt(cipherText2);
+				Assert.True(Utils.ArrayEqual(text1, plainText));
+				Assert.True(Utils.ArrayEqual(text2, plainText));
+				Assert.True(!Utils.ArrayEqual(cipherText1, cipherText2));
+			}
+
+			// Electrum compatibility
+			key = Key.Parse("cQnjfHeuxMBz9gVo7utDmhjFqppGAUTejtjVhgmULTgf5saZLX8Q", Network.TestNet);
+			var text = key.Decrypt("QklFMQORN+6df13s/J7dSUIIK2Y9i9/MmHXwP3jA1daFwWjR+fRWP6qnW3+MZF+d6J8wOWDzrftx4O52fs4yplCyFL3gi+pSGE7YsngXHz/bLiulpQ==");
+			Assert.Equal("Hello world", text);
+		}
+
+		private Key GetKeyFromPassword(string password)
+		{
+			var bytes = Encoding.UTF8.GetBytes(password);
+#pragma warning disable CS0618 // Type or member is obsolete
+#if USEBC || WINDOWS_UWP || NETSTANDARD1X
+			var mac = new NBitcoin.BouncyCastle.Crypto.Macs.HMac(new NBitcoin.BouncyCastle.Crypto.Digests.Sha512Digest());
+			mac.Init(new NBitcoin.BouncyCastle.Crypto.Parameters.KeyParameter(bytes));
+			var secret = Pbkdf2.ComputeDerivedKey(mac, new byte[0], 1024, 32);
+#else
+			var secret = Pbkdf2.ComputeDerivedKey(new HMACSHA512(bytes), new byte[0], 1024, 32);
+#endif
+#pragma warning restore CS0618
+			return new Key(secret);
 		}
 
 		[Fact]

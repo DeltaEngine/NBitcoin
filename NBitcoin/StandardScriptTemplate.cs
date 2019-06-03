@@ -970,6 +970,22 @@ namespace NBitcoin
 			get;
 			set;
 		}
+
+		public bool NeedWitnessRedeemScript()
+		{
+			return Version == OpcodeType.OP_0 && Program?.Length is 32;
+		}
+
+		public bool VerifyWitnessRedeemScript(Script witnessRedeemScript)
+		{
+			if (witnessRedeemScript == null)
+				throw new ArgumentNullException(nameof(witnessRedeemScript));
+			if (Version == OpcodeType.OP_0 && Program?.Length is 32)
+			{
+				return witnessRedeemScript.WitHash == new WitScriptId(Program);
+			}
+			return false;
+		}
 	}
 
 	public class PayToWitTemplate : ScriptTemplate

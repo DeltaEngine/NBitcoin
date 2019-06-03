@@ -1,7 +1,6 @@
 using System.IO;
 using FsCheck;
 using FsCheck.Xunit;
-using NBitcoin.BIP174;
 using NBitcoin.Tests.Generators;
 using NBitcoin;
 using Xunit;
@@ -24,41 +23,6 @@ namespace NBitcoin.Tests.PropertyTest
 			Arb.Register<PrimitiveGenerator>();
 
 			ComparerInstance = new PSBTComparer();
-		}
-
-		[Property]
-		[Trait("UnitTest", "UnitTest")]
-		public void CanSerializeOutputAsymmetric(PSBTOutput psbtout) => SerializeAsymmetric(psbtout);
-
-		private void SerializeAsymmetric<T>(T item) where T : IBitcoinSerializable, new()
-		{
-			var ms = new MemoryStream();
-			var stream = new BitcoinStream(ms, true);
-			item.ReadWrite(stream);
-			var stream2 = new BitcoinStream(ms, false);
-			ms.Position = 0;
-			var item2 = new T();
-			item2.ReadWrite(stream2);
-			Assert.Equal(item, item2);
-
-			var copy = item.Clone();
-			Assert.Equal(item, copy);
-		}
-
-		[Property(MaxTest = 15)]
-		[Trait("UnitTest", "UnitTest")]
-		public void ShouldAddKeyInfo(PSBT psbt, Key key, uint MasterKeyFingerPrint, KeyPath path)
-		{
-			for (var i = 0; i < psbt.Inputs.Count; i++)
-			{
-				psbt.AddPathTo(i, key.PubKey, MasterKeyFingerPrint, path);
-				Assert.Single(psbt.Inputs[i].HDKeyPaths);
-			}
-			for (var i = 0; i < psbt.Outputs.Count; i++)
-			{
-				psbt.AddPathTo(i, key.PubKey, MasterKeyFingerPrint, path, false);
-				Assert.Single(psbt.Outputs[i].HDKeyPaths);
-			}
 		}
 
 		[Property(MaxTest = 10)]

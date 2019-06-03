@@ -18,6 +18,7 @@ using NBitcoin.Logging;
 using NBitcoin.Tests.Helpers;
 using Xunit.Abstractions;
 using Xunit.Sdk;
+using NBitcoin.Protocol.Connectors;
 
 namespace NBitcoin.Tests
 {
@@ -335,7 +336,7 @@ namespace NBitcoin.Tests
 				var batch = rpc.PrepareBatch();
 				for(int i = 0; i < 20; i++)
 				{
-					var address = new Key().PubKey.GetAddress(rpc.Network);
+					var address = (BitcoinPubKeyAddress)new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, rpc.Network);
 					knownAddresses.Add(address.Hash);
 #pragma warning disable CS4014
 					batch.SendToAddressAsync(address, Money.Coins(0.5m));
@@ -547,7 +548,7 @@ namespace NBitcoin.Tests
 				node.Start();
 				var rpc = node.CreateRPCClient();
 				rpc.Generate(101);
-				rpc.SendToAddress(new Key().PubKey.GetAddress(Network.RegTest), Money.Coins(1.0m));
+				rpc.SendToAddress(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, Network.RegTest), Money.Coins(1.0m));
 				var client = node.CreateNodeClient();
 				client.VersionHandshake();
 				var transactions = client.GetMempoolTransactions();
@@ -625,7 +626,7 @@ namespace NBitcoin.Tests
 				node.Start();
 				rpc.Generate(102);
 				for(int i = 0; i < 2; i++)
-					node.CreateRPCClient().SendToAddress(new Key().PubKey.GetAddress(Network.RegTest), Money.Coins(1.0m));
+					node.CreateRPCClient().SendToAddress(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, Network.RegTest), Money.Coins(1.0m));
 				var client = node.CreateNodeClient();
 				var txIds = client.GetMempool();
 				Assert.True(txIds.Length == 2);
@@ -809,11 +810,66 @@ namespace NBitcoin.Tests
 			}
 		}
 
+
+		//[Fact]
+		// This test is disabled because it relies on hosts that might
+		// be up and down. Please, if you want to test it, adapt the links
+		// You need to run Tor Browser (the test use socks port 9150, not 9050)
+
+#pragma warning disable xUnit1013 // Public method should be marked as test
+		//[Fact]
+		public async Task TestDifferentConnectionMethods()
+#pragma warning restore xUnit1013 // Public method should be marked as test
+		{
+			var hosts = new[]
+				{
+				// Should works with IPv6
+				"[2406:da18:f7c:4351:94e0:5b27:78c2:5111]:8333",
+
+				// Should works for onion
+				"7xnmrhmkvptbcvpl.onion:8333",
+
+				// Should works for onioncat
+				Utils.ParseEndpoint("7xnmrhmkvptbcvpl.onion:8333", 8333).AsOnionCatIPEndpoint().ToEndpointString(),
+
+				// Should works for ipv4
+				"38.140.62.62",
+
+				// Should works for ipv4 mapped
+				"[::ffff:38.140.62.62]",
+
+				// Should works for DNS names
+				"ec2-52-14-64-82.us-east-2.compute.amazonaws.com"
+				};
+			foreach (var (onlyForOnionHosts, changeIpIdentities) in new[] { (true, true), (true, false), (false, true), (false, false) })
+			{
+				foreach (var endpoint in hosts.Select(h => Utils.ParseEndpoint(h, Network.Main.DefaultPort)))
+				{
+					if (endpoint is IPEndPoint ipv6 && !ipv6.IsTor() && onlyForOnionHosts)
+						continue; // My network does not support ipv6 without Tor so I disable this test
+					using (var cancellationToken = new CancellationTokenSource(20000))
+					{
+						var node = await Node.ConnectAsync(Network.Main, endpoint, new NodeConnectionParameters()
+						{
+							TemplateBehaviors =
+							{
+								new SocksSettingsBehavior(Utils.ParseEndpoint("localhost", 9150), onlyForOnionHosts, null, changeIpIdentities)
+							},
+							ConnectCancellation = cancellationToken.Token
+						});
+
+						node.VersionHandshake();
+						node.DisconnectAsync();
+					}
+				}
+			}
+		}
+
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
 		public void CanExchangeFastPingPong()
 		{
-			using(var tester = new NodeServerTester())
+			using (var tester = new NodeServerTester())
 			{
 				var n1 = tester.Node1;
 				n1.Behaviors.Add(new PingPongBehavior()

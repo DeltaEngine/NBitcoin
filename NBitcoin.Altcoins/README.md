@@ -18,6 +18,8 @@ Currently supported altcoins are:
 * Viacoin
 * Zclassic
 * Koto
+* Bitcoinplus
+* Chaincoin
 
 ## How to use?
 

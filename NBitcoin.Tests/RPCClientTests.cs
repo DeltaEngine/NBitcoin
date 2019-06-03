@@ -16,7 +16,6 @@ using Xunit;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 using FsCheck.Xunit;
-using NBitcoin.BIP174;
 using FsCheck;
 using NBitcoin.Tests.Generators;
 using static NBitcoin.Tests.Comparer;
@@ -156,10 +155,25 @@ namespace NBitcoin.Tests
 				var rpc = node.CreateRPCClient();
 				builder.StartAll();
 				node.Generate(101);
-				var txid = rpc.SendToAddress(new Key().PubKey.GetAddress(rpc.Network), Money.Coins(1.0m), "hello", "world");
+				var txid = rpc.SendToAddress(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, rpc.Network), Money.Coins(1.0m), "hello", "world");
 				var ids = rpc.GetRawMempool();
 				Assert.Single(ids);
 				Assert.Equal(txid, ids[0]);
+			}
+		}
+
+		[Fact]
+		public void CanUseRPCAuth()
+		{
+			using (var builder = NodeBuilderEx.Create())
+			{
+				var node = builder.CreateNode();
+				var creds = new NetworkCredential("lnd", "afixedpasswordbecauselndsuckswithcookiefile");
+				var str = RPCClient.GetRPCAuth(creds);
+				node.ConfigParameters.Add("rpcauth", str);
+				node.Start();
+				var rpc = new RPCClient(creds, node.RPCUri, node.Network);
+				rpc.GetBlockCount();
 			}
 		}
 
@@ -173,7 +187,7 @@ namespace NBitcoin.Tests
 				builder.StartAll();
 				node.Generate(101);
 
-				var txid = rpc.SendToAddress(new Key().PubKey.GetAddress(rpc.Network), Money.Coins(1.0m), "hello", "world");
+				var txid = rpc.SendToAddress(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, rpc.Network), Money.Coins(1.0m), "hello", "world");
 				var memPoolInfo = rpc.GetMemPool();
 				Assert.NotNull(memPoolInfo);
 				Assert.Equal(1, memPoolInfo.Size);
@@ -325,7 +339,7 @@ namespace NBitcoin.Tests
 				node.Generate(101);
 
 				var key = new Key();
-				var address = key.PubKey.GetAddress(rpc.Network);
+				var address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, rpc.Network);
 
 				var txid = rpc.SendToAddress(address, Money.Coins(2), null, null, false, true);
 				var txbumpid = rpc.BumpFee(txid);
@@ -384,7 +398,7 @@ namespace NBitcoin.Tests
 				Assert.Equal((uint)firstTx.GetVirtualSize(), txInfo.VirtualSize);
 
 				// unconfirmed tx doesn't have blockhash, blocktime nor transactiontime.
-				var mempoolTxId = rpc.SendToAddress(new Key().PubKey.GetAddress(builder.Network), Money.Coins(1));
+				var mempoolTxId = rpc.SendToAddress(new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, builder.Network), Money.Coins(1));
 				txInfo = rpc.GetRawTransactionInfo(mempoolTxId);
 				Assert.Null(txInfo.TransactionTime);
 				Assert.Null(txInfo.BlockHash);
@@ -426,11 +440,11 @@ namespace NBitcoin.Tests
 				Assert.Equal(getTxOutResponse.Confirmations, blocksToGenerate);
 				Assert.Equal(Money.Coins(50), getTxOutResponse.TxOut.Value);
 				Assert.NotNull(getTxOutResponse.TxOut.ScriptPubKey);
-				Assert.Equal("pubkey", getTxOutResponse.ScriptPubKeyType);
+				Assert.True(getTxOutResponse.ScriptPubKeyType == "pubkey" || getTxOutResponse.ScriptPubKeyType == "scripthash");
 				Assert.True(getTxOutResponse.IsCoinBase);
 
 				// 2. Spend the first coin
-				var address = new Key().PubKey.GetAddress(rpc.Network);
+				var address = new Key().PubKey.GetAddress(ScriptPubKeyType.Legacy, rpc.Network);
 				Money sendAmount = Money.Parse("49");
 				txId = await rpc.SendToAddressAsync(address, sendAmount);
 
@@ -550,7 +564,8 @@ namespace NBitcoin.Tests
 		[Fact]
 		public void CanImportMultiAddresses()
 		{
-			// Test cases borrowed from: https://github.com/bitcoin/bitcoin/blob/master/test/functional/importmulti.py
+			// Test cases borrowed from: https://github.com/bitcoin/bitcoin/blob/master/test/functional/wallet_importmulti.py
+			// TODO: Those tests need to be rewritten to test warnings
 			using (var builder = NodeBuilderEx.Create())
 			{
 				var rpc = builder.CreateNode().CreateRPCClient();
@@ -569,7 +584,7 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(network) },
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network) },
 						Timestamp = Utils.UnixTimeToDateTime(0)
 					}
 				};
@@ -602,9 +617,7 @@ namespace NBitcoin.Tests
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_PARAMETER, response.RPCCode);
-				Assert.Equal("Internal must be set for hex scriptPubKey", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region Address + Public key + !internal
@@ -613,7 +626,7 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject(key.PubKey.GetAddress(network)),
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject(key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network)),
 						PubKeys = new string[] { key.PubKey.ToString() }
 					}
 				};
@@ -647,9 +660,7 @@ namespace NBitcoin.Tests
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_PARAMETER, response.RPCCode);
-				Assert.Equal("Internal must be set for hex scriptPubKey", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region Address + Private key + !watchonly
@@ -658,7 +669,7 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(network) },
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network) },
 						Keys = new string[] { key.GetWif(network).ToString() }
 					}
 				};
@@ -669,7 +680,7 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(network) },
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network) },
 						Keys = new string[] { key.GetWif(network).ToString() }
 					}
 				};
@@ -686,15 +697,13 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(network) },
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network) },
 						Keys = new string[] { key.GetWif(network).ToString() },
 						WatchOnly = true
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_PARAMETER, response.RPCCode);
-				Assert.Equal("Incompatibility found between watchonly and keys", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region ScriptPubKey + Private key + internal
@@ -723,7 +732,7 @@ namespace NBitcoin.Tests
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region P2SH address
@@ -748,14 +757,12 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(network) },
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network) },
 						PubKeys = new string[] { new Key().PubKey.ToString() }
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_ADDRESS_OR_KEY, response.RPCCode);
-				Assert.Equal("Consistency check failed", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region ScriptPubKey + Public key + internal + Wrong pubkey
@@ -770,9 +777,7 @@ namespace NBitcoin.Tests
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_ADDRESS_OR_KEY, response.RPCCode);
-				Assert.Equal("Consistency check failed", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region Address + Private key + !watchonly + Wrong private key
@@ -781,14 +786,12 @@ namespace NBitcoin.Tests
 				{
 					new ImportMultiAddress
 					{
-						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(network) },
+						ScriptPubKey = new ImportMultiAddress.ScriptPubKeyObject { Address = key.PubKey.GetAddress(ScriptPubKeyType.Legacy, network) },
 						Keys = new string[] { new Key().GetWif(network).ToString() }
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_ADDRESS_OR_KEY, response.RPCCode);
-				Assert.Equal("Consistency check failed", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region ScriptPubKey + Private key + internal + Wrong private key
@@ -803,9 +806,7 @@ namespace NBitcoin.Tests
 					}
 				};
 
-				response = Assert.Throws<RPCException>(() => rpc.ImportMulti(multiAddresses.ToArray(), false));
-				Assert.Equal(RPCErrorCode.RPC_INVALID_ADDRESS_OR_KEY, response.RPCCode);
-				Assert.Equal("Consistency check failed", response.Message);
+				rpc.ImportMulti(multiAddresses.ToArray(), false);
 				#endregion
 
 				#region Importing existing watch only address with new timestamp should replace saved timestamp.
@@ -1088,39 +1089,67 @@ namespace NBitcoin.Tests
 		}
 
 #if !NOSOCKET
+
 		[Fact]
 		[Trait("UnitTest", "UnitTest")]
-		public void CanParseIpEndpoint()
+		public void onioncat_test()
 		{
-			var endpoint = Utils.ParseIpEndpoint("google.com:94", 90);
-			Assert.Equal(94, endpoint.Port);
-			endpoint = Utils.ParseIpEndpoint("google.com", 90);
-			Assert.Equal(90, endpoint.Port);
-			endpoint = Utils.ParseIpEndpoint("10.10.1.3", 90);
-			Assert.Equal("10.10.1.3", endpoint.Address.ToString());
-			Assert.Equal(90, endpoint.Port);
-			endpoint = Utils.ParseIpEndpoint("10.10.1.3:94", 90);
-			Assert.Equal("10.10.1.3", endpoint.Address.ToString());
-			Assert.Equal(94, endpoint.Port);
+			var ip1 = Utils.ParseEndpoint("FD87:D87E:EB43:edb1:8e4:3588:e546:35ca", 10);
+			var ip2 = Utils.ParseEndpoint("5wyqrzbvrdsumnok.onion", 10);
+			Assert.True(ip1.IsTor());
+			Assert.True(ip2.IsTor());
+			Assert.IsType<IPEndPoint>(ip1);
+			Assert.IsType<DnsEndPoint>(ip2);
+			var torv3 = Utils.ParseEndpoint("explorerzydxu5ecjrkwceayqybizmpjjznk5izmitf2modhcusuqlid.onion", 10);
+			Assert.True(torv3.IsTor());
+			Assert.Null(torv3.AsOnionCatIPEndpoint());
+			ip2 = ip2.AsOnionCatIPEndpoint();
+			Assert.True(ip2.IsTor());
+			Assert.Equal(ip1, ip2);
+			ip1 = ip1.AsOnionCatIPEndpoint();
+			Assert.Equal(ip1, ip2);
+			Assert.True(((IPEndPoint)ip1).Address.IsRoutable(false));
 
-			Exception exception = null;
-			try
-			{
-				Utils.ParseIpEndpoint("2001:db8:1f70::999:de8:7648:6e8:100", 90);
-			}
-			catch (Exception ex)
-			{
-				exception = ex;
-			}
-			Assert.NotNull(exception);
-			Assert.Contains("SocketException", exception.GetType().FullName);
+			ip2 = Utils.ParseEndpoint("5wyqrzbvrdsumnok.onion", 10);
+			ip1 = ip1.AsOnionDNSEndpoint();
+			Assert.Equal(ip1, ip2);
+			ip2 = ip2.AsOnionDNSEndpoint();
+			Assert.Equal(ip1, ip2);
+			Assert.Equal("5wyqrzbvrdsumnok.onion:10", ip2.ToEndpointString());
+		}
 
-			endpoint = Utils.ParseIpEndpoint("2001:db8:1f70::999:de8:7648:6e8", 90);
-			Assert.Equal("2001:db8:1f70:0:999:de8:7648:6e8", endpoint.Address.ToString());
-			Assert.Equal(90, endpoint.Port);
-			endpoint = Utils.ParseIpEndpoint("[2001:db8:1f70::999:de8:7648:6e8]:94", 90);
-			Assert.Equal("2001:db8:1f70:0:999:de8:7648:6e8", endpoint.Address.ToString());
-			Assert.Equal(94, endpoint.Port);
+		[Fact]
+		[Trait("UnitTest", "UnitTest")]
+		public void CanParseEndpoint()
+		{
+			var endpoint = Utils.ParseEndpoint("google.com:94", 90);
+			Assert.Equal(94, Assert.IsType<DnsEndPoint>(endpoint).Port);
+			endpoint = Utils.ParseEndpoint("google.com", 90);
+			Assert.Equal(90, Assert.IsType<DnsEndPoint>(endpoint).Port);
+			endpoint = Utils.ParseEndpoint("10.10.1.3", 90);
+			Assert.Equal("10.10.1.3", Assert.IsType<IPEndPoint>(endpoint).Address.ToString());
+			Assert.Equal(90, Assert.IsType<IPEndPoint>(endpoint).Port);
+			endpoint = Utils.ParseEndpoint("10.10.1.3:94", 90);
+			Assert.Equal("10.10.1.3", Assert.IsType<IPEndPoint>(endpoint).Address.ToString());
+			Assert.Equal(94, Assert.IsType<IPEndPoint>(endpoint).Port);
+
+			endpoint = Utils.ParseEndpoint("::1", 90);
+			Assert.Equal("[::1]:90", Assert.IsType<IPEndPoint>(endpoint).ToString());
+			Assert.Equal(90, Assert.IsType<IPEndPoint>(endpoint).Port);
+
+			endpoint = Utils.ParseEndpoint("[2001:db8:1f70::999:de8:7648:6e8]:100", 90);
+			Assert.Equal("2001:db8:1f70:0:999:de8:7648:6e8", Assert.IsType<IPEndPoint>(endpoint).Address.ToString());
+			Assert.Equal(100, Assert.IsType<IPEndPoint>(endpoint).Port);
+
+			endpoint = Utils.ParseEndpoint("2001:db8:1f70::999:de8:7648:6e8", 90);
+			Assert.Equal("2001:db8:1f70:0:999:de8:7648:6e8", Assert.IsType<IPEndPoint>(endpoint).Address.ToString());
+			Assert.Equal(90, Assert.IsType<IPEndPoint>(endpoint).Port);
+			endpoint = Utils.ParseEndpoint("[2001:db8:1f70::999:de8:7648:6e8]:94", 90);
+			Assert.Equal("2001:db8:1f70:0:999:de8:7648:6e8", Assert.IsType<IPEndPoint>(endpoint).Address.ToString());
+			Assert.Equal(94, Assert.IsType<IPEndPoint>(endpoint).Port);
+			Assert.Throws<FormatException>(() => Utils.ParseEndpoint("inv LiewoN(#)9 hostname:94", 90));
+			Assert.Throws<FormatException>(() => Utils.ParseEndpoint("inv LiewoN(#)9 hostname", 90));
+			Assert.Throws<FormatException>(() => Utils.ParseEndpoint("", 90));
 		}
 
 		[Fact]
@@ -1276,12 +1305,8 @@ namespace NBitcoin.Tests
 
 				// case1: PSBT from already fully signed tx
 				var tx = PSBTTests.CreateTxToSpendFunds(funds, keys, redeem, true, true);
-				// PSBT without previous outputs but with finalized_script_witness will throw an error.
-				var psbt = PSBT.FromTransaction(tx.Clone(), true);
-				Assert.Throws<FormatException>(() => psbt.ToBase64());
-
-				// after adding coins, will not throw an error.
-				psbt.AddCoins(funds.SelectMany(f => f.Outputs.AsCoins()).ToArray());
+				var psbt = PSBT.FromTransaction(tx);
+				psbt.AddCoins(funds);
 				CheckPSBTIsAcceptableByRealRPC(psbt.ToBase64(), client);
 
 				// but if we use rpc to convert tx to psbt, it will discard input scriptSig and ScriptWitness.
@@ -1291,16 +1316,13 @@ namespace NBitcoin.Tests
 
 				// case2: PSBT from tx with script (but without signatures)
 				tx = PSBTTests.CreateTxToSpendFunds(funds, keys, redeem, true, false);
-				psbt = PSBT.FromTransaction(tx, true);
-				// it has witness_script but has no prevout so it will throw an error.
-				Assert.Throws<FormatException>(() => psbt.ToBase64());
-				// after adding coins, will not throw error.
-				psbt.AddCoins(funds.SelectMany(f => f.Outputs.AsCoins()).ToArray());
+				psbt = PSBT.FromTransaction(tx);
+				psbt.AddCoins(funds);
 				CheckPSBTIsAcceptableByRealRPC(psbt.ToBase64(), client);
 
 				// case3: PSBT from tx without script nor signatures.
 				tx = PSBTTests.CreateTxToSpendFunds(funds, keys, redeem, false, false);
-				psbt = PSBT.FromTransaction(tx, true);
+				psbt = PSBT.FromTransaction(tx);
 				// This time, it will not throw an error at the first place.
 				// Since sanity check for witness input will not complain about witness-script-without-witnessUtxo
 				CheckPSBTIsAcceptableByRealRPC(psbt.ToBase64(), client);
@@ -1309,30 +1331,30 @@ namespace NBitcoin.Tests
 				var dummyScript = new Script("OP_DUP " + "OP_HASH160 " + Op.GetPushOp(dummyKey.PubKey.Hash.ToBytes()) + " OP_EQUALVERIFY");
 
 				// even after adding coins and scripts ...
-				var psbtWithCoins = psbt.Clone().AddCoins(funds.SelectMany(f => f.Outputs.AsCoins()).ToArray());
+				var psbtWithCoins = psbt.Clone().AddCoins(funds);
 				CheckPSBTIsAcceptableByRealRPC(psbtWithCoins.ToBase64(), client);
-				psbtWithCoins.AddScript(redeem);
+				psbtWithCoins.AddScripts(redeem);
 				CheckPSBTIsAcceptableByRealRPC(psbtWithCoins.ToBase64(), client);
-				var tmp = psbtWithCoins.Clone().AddScript(dummyScript); // should not change with dummyScript
+				var tmp = psbtWithCoins.Clone().AddScripts(dummyScript); // should not change with dummyScript
 				Assert.Equal(psbtWithCoins, tmp, PSBTComparerInstance);
 				// or txs and scripts.
 				var psbtWithTXs = psbt.Clone().AddTransactions(funds);
 				CheckPSBTIsAcceptableByRealRPC(psbtWithTXs.ToBase64(), client);
-				psbtWithTXs.AddScript(redeem);
+				psbtWithTXs.AddScripts(redeem);
 				CheckPSBTIsAcceptableByRealRPC(psbtWithTXs.ToBase64(), client);
-				tmp = psbtWithTXs.Clone().AddScript(dummyScript);
+				tmp = psbtWithTXs.Clone().AddScripts(dummyScript);
 				Assert.Equal(psbtWithTXs, tmp, PSBTComparerInstance);
 
-				// Let's don't forget about hd KeyPath
-				psbtWithTXs.AddKeyPath(keys[0].PubKey, Tuple.Create((uint)1234, KeyPath.Parse("m/1'/2/3")));
-				psbtWithTXs.AddPathTo(3, keys[1].PubKey, 4321, KeyPath.Parse("m/3'/2/1"));
-				psbtWithTXs.AddPathTo(0, keys[1].PubKey, 4321, KeyPath.Parse("m/3'/2/1"), false);
+				// Let's not forget about hd KeyPath
+				psbtWithTXs.AddKeyPath(keys[0].PubKey, new RootedKeyPath(default(HDFingerprint), KeyPath.Parse("m/1'/2/3")));
+				psbtWithTXs.AddKeyPath(keys[1].PubKey, new RootedKeyPath(default(HDFingerprint), KeyPath.Parse("m/3'/2/1")));
+				psbtWithTXs.AddKeyPath(keys[1].PubKey, new RootedKeyPath(default(HDFingerprint), KeyPath.Parse("m/3'/2/1")));
 				CheckPSBTIsAcceptableByRealRPC(psbtWithTXs.ToBase64(), client);
 
 				// What about after adding some signatures?
-				psbtWithTXs.SignAll(keys);
+				psbtWithTXs.SignWithKeys(keys);
 				CheckPSBTIsAcceptableByRealRPC(psbtWithTXs.ToBase64(), client);
-				tmp = psbtWithTXs.Clone().SignAll(dummyKey); // Try signing with unrelated key should not change anything
+				tmp = psbtWithTXs.Clone().SignWithKeys(dummyKey); // Try signing with unrelated key should not change anything
 				Assert.Equal(psbtWithTXs, tmp, PSBTComparerInstance);
 				// And finalization?
 				psbtWithTXs.Finalize();
@@ -1374,9 +1396,9 @@ namespace NBitcoin.Tests
 				var redeem = PayToMultiSigTemplate.Instance.GenerateScriptPubKey(3, keys.Select(ki => ki.PubKey).ToArray());
 				var funds = PSBTTests.CreateDummyFunds(Network.TestNet, keys, redeem);
 				var tx = PSBTTests.CreateTxToSpendFunds(funds, keys, redeem, true, true);
-				var psbt = PSBT.FromTransaction(tx, true)
+				var psbt = PSBT.FromTransaction(tx)
 					.AddTransactions(funds)
-					.AddScript(redeem);
+					.AddScripts(redeem);
 				var case1Result = client.WalletProcessPSBT(psbt);
 				// nothing must change for the psbt unrelated to the wallet.
 				Assert.Equal(psbt, case1Result.PSBT, PSBTComparerInstance);
@@ -1387,11 +1409,11 @@ namespace NBitcoin.Tests
 				tx.Outputs.Add(new TxOut(Money.Coins(45), kOut)); // This has to be big enough since the wallet must use whole kinds of address.
 				var fundTxResult = client.FundRawTransaction(tx);
 				Assert.Equal(3, fundTxResult.Transaction.Inputs.Count);
-				var psbtFinalized = PSBT.FromTransaction(fundTxResult.Transaction, true);
+				var psbtFinalized = PSBT.FromTransaction(fundTxResult.Transaction);
 				var result = client.WalletProcessPSBT(psbtFinalized, false);
-				Assert.False(result.PSBT.CanExtractTX());
+				Assert.False(result.PSBT.CanExtractTransaction());
 				result = client.WalletProcessPSBT(psbtFinalized, true);
-				Assert.True(result.PSBT.CanExtractTX());
+				Assert.True(result.PSBT.CanExtractTransaction());
 
 				// case 3a: psbt relevant to the wallet (and not finalized)
 				var spendableCoins = client.ListUnspent().Where(c => c.IsSpendable).Select(c => c.AsCoin());
@@ -1399,21 +1421,20 @@ namespace NBitcoin.Tests
 				foreach (var coin in spendableCoins)
 					tx.Inputs.Add(coin.Outpoint);
 				tx.Outputs.Add(new TxOut(Money.Coins(45), kOut));
-				var psbtUnFinalized = PSBT.FromTransaction(tx, true);
+				var psbtUnFinalized = PSBT.FromTransaction(tx);
 
 				var type = SigHash.All;
 				// unsigned
 				result = client.WalletProcessPSBT(psbtUnFinalized, false, type, bip32derivs: true);
 				Assert.False(result.Complete);
-				Assert.False(result.PSBT.CanExtractTX());
-				var ex2 = Assert.Throws<AggregateException>(
+				Assert.False(result.PSBT.CanExtractTransaction());
+				var ex2 = Assert.Throws<PSBTException>(
 					() => result.PSBT.Finalize()
 				);
-				var errors2 = ex2.InnerExceptions;
-				Assert.NotEmpty(errors2);
+				Assert.NotEmpty(ex2.Errors);
 				foreach (var psbtin in result.PSBT.Inputs)
 				{
-					Assert.Equal(SigHash.Undefined, psbtin.SighashType);
+					Assert.Null(psbtin.SighashType);
 					Assert.NotEmpty(psbtin.HDKeyPaths);
 				}
 
@@ -1422,7 +1443,7 @@ namespace NBitcoin.Tests
 				// does not throw
 				result.PSBT.Finalize();
 
-				var txResult = result.PSBT.ExtractTX();
+				var txResult = result.PSBT.ExtractTransaction();
 				var acceptResult = client.TestMempoolAccept(txResult, true);
 				Assert.True(acceptResult.IsAllowed, acceptResult.RejectReason);
 			}
@@ -1438,8 +1459,6 @@ namespace NBitcoin.Tests
 		{
 			using (var builder = NodeBuilderEx.Create())
 			{
-				if (!builder.NodeImplementation.Version.Contains("0.17"))
-					throw new Exception("Test must be updated!");
 				var nodeAlice = builder.CreateNode();
 				var nodeBob = builder.CreateNode();
 				var nodeCarol = builder.CreateNode();
@@ -1533,18 +1552,18 @@ namespace NBitcoin.Tests
 				var psbt1 = bob.WalletProcessPSBT(psbt.Clone()).PSBT;
 
 				// at the same time, David may do the ;
-				psbt.SignAll(david);
+				psbt.SignWithKeys(david);
 				var alice = clients[0];
 				var psbt2 = alice.WalletProcessPSBT(psbt).PSBT;
 
 				// not enough signatures
-				Assert.Throws<AggregateException>(() => psbt.Finalize());
+				Assert.Throws<PSBTException>(() => psbt.Finalize());
 
 				// So let's combine.
 				var psbtCombined = psbt1.Combine(psbt2);
 
 				// Finally, anyone can finalize and broadcast the psbt.
-				var tx = psbtCombined.Finalize().ExtractTX();
+				var tx = psbtCombined.Finalize().ExtractTransaction();
 				var result = alice.TestMempoolAccept(tx);
 				Assert.True(result.IsAllowed, result.RejectReason);
 			}
@@ -1562,8 +1581,6 @@ namespace NBitcoin.Tests
 		{
 			using (var builder = NodeBuilderEx.Create())
 			{
-				if (!builder.NodeImplementation.Version.Contains("0.17"))
-					throw new Exception("Test must be updated!");
 				var client = builder.CreateNode(true).CreateRPCClient();
 				var addrLegacy = client.GetNewAddress(new GetNewAddressRequest() { AddressType = AddressType.Legacy });
 				var addrBech32 = client.GetNewAddress(new GetNewAddressRequest() { AddressType = AddressType.Bech32 });

@@ -1,4 +1,6 @@
-﻿namespace NBitcoin.Tests
+﻿using System;
+
+namespace NBitcoin.Tests
 {
 	public partial class NodeDownloadData
 	{
@@ -81,6 +83,33 @@
 					DownloadLink = "https://bitcoincore.org/bin/bitcoin-core-{0}/bitcoin-{0}-win64.zip",
 					Archive = "bitcoin-{0}-win64.zip",
 					Hash = "d6312ef594fa701d6bc863415baeccd3a140f200259fcfac56dde81a73d50799"
+				},
+				UseSectionInConfigFile = true
+			};
+
+			public NodeDownloadData v0_18_0 = new NodeDownloadData()
+			{
+				Version = "0.18.0",
+				Linux = new NodeOSDownloadData()
+				{
+					Archive = "bitcoin-{0}-x86_64-linux-gnu.tar.gz",
+					DownloadLink = "https://bitcoincore.org/bin/bitcoin-core-{0}/bitcoin-{0}-x86_64-linux-gnu.tar.gz",
+					Executable = "bitcoin-{0}/bin/bitcoind",
+					Hash = "5146ac5310133fbb01439666131588006543ab5364435b748ddfc95a8cb8d63f"
+				},
+				Mac = new NodeOSDownloadData()
+				{
+					Archive = "bitcoin-{0}-osx64.tar.gz",
+					DownloadLink = "https://bitcoincore.org/bin/bitcoin-core-{0}/bitcoin-{0}-osx64.tar.gz",
+					Executable = "bitcoin-{0}/bin/bitcoind",
+					Hash = "12ae4dfc7566d08116509a592bb3ab5036b50405cba75f7d52105cee98ba47b0"
+				},
+				Windows = new NodeOSDownloadData()
+				{
+					Executable = "bitcoin-{0}/bin/bitcoind.exe",
+					DownloadLink = "https://bitcoincore.org/bin/bitcoin-core-{0}/bitcoin-{0}-win64.zip",
+					Archive = "bitcoin-{0}-win64.zip",
+					Hash = "29f449e2d1986a924b512e043893f932170830a45981323d8943ba6410848153"
 				},
 				UseSectionInConfigFile = true
 			};
@@ -764,7 +793,7 @@
 				}
 			};
 		}
-	public class KotoNodeDownloadData
+		public class KotoNodeDownloadData
 		{
 			public NodeDownloadData v2_0_0 = new NodeDownloadData()
 			{
@@ -793,7 +822,91 @@
 			};
 		}
 
+        public class BitcoinplusNodeDownloadData
+        {
+            public NodeDownloadData v2_7_0 = new NodeDownloadData()
+            {
+                Version = "2.7.0",
+                Windows = new NodeOSDownloadData()
+                {
+                    DownloadLink = "https://downloads.bitcoinplus.org/bitcoinplus-2.7.0.zip",
+                    Archive = "bitcoinplus-{0}-win64.zip",
+                    Executable = "bitcoinplus-{0}/bin/bitcoinplusd.exe",
+                    Hash = "3eb8fc8c57eba865c4818653f1745adbca7ee5c9065e622311907eb4d5c34273"
+                },
+                Linux = new NodeOSDownloadData()
+                {
+                    DownloadLink = "https://downloads.bitcoinplus.org/bitcoinplus-2.7.0-x86_64.tar.gz",
+                    Archive = "bitcoinplus-{0}-x86_64-linux-gnu.tar.gz",
+                    Executable = "bitcoinplus-{0}/bin/bitcoinplusd",
+                    Hash = "753547b23988124defbf9bee029b4902d6277ce467c63f2ad6588c53817b2251"
+                },
+                Mac = new NodeOSDownloadData()
+                {
+                    DownloadLink = "https://downloads.bitcoinplus.org/bitcoinplus-2.7.0-osx64.tar.gz",
+                    Archive = "Bitcoinplus-Core.dmg",
+                    Executable = "bitcoinplusd",
+                    Hash = "09d381ed0082fccd6e3af4792b975fee177cffc546fd449181a4c37b4907cff8"
+                }
+            };
+        }
 
+		public class ChaincoinNodeDownloadData
+		{
+			public NodeDownloadData v0_16_4 = new NodeDownloadData()
+			{
+				Version = "0.16.4",
+				Windows = new NodeOSDownloadData()
+				{
+					DownloadLink = "https://github.com/fellowserf/chaincoin/releases/download/v{0}/chaincoincore-{0}-win64.zip",
+					Archive = "chaincoincore-{0}-win64.zip",
+					Executable = "chaincoincore-0.16.4/bin/chaincoind.exe",
+					Hash = "58dc6cc513fadcd9216062d332a5214fcb28a51a80883a32b3b9534093cdda2c"
+				},
+				Linux = new NodeOSDownloadData()
+				{
+					DownloadLink = "https://github.com/chaincoin/chaincoin/releases/download/v{0}/chaincoin-{0}-x86_64-linux-gnu.tar.gz",
+					Archive = "chaincoin-{0}-x86_64-linux-gnu.tar.gz",
+					Executable = "chaincoin-0.16.4/bin/chaincoind",
+					Hash = "b841f9c2098e973217a32a6213fe2a5bfe2987dd7b5c851a38082ce191b65283"
+				}
+			};
+		}
+
+		/// <summary>
+		/// Using Stratis C# full node.
+		/// Should be updated to use official release once it is deployed.
+		/// </summary>
+		public class StratisNodeDownloadData
+		{
+			public NodeDownloadData v3_0_0 = new NodeDownloadData()
+			{
+				Version = "3.0",
+				Windows = new NodeOSDownloadData()
+				{
+					DownloadLink = "https://github.com/mikedennis/StratisBitcoinFullNode/releases/download/{0}/stratis-{0}-win64.zip",
+					Archive = "stratis-{0}-win64.zip",
+					Executable = "stratis-{0}-win64/Stratis.StratisD.exe",
+					Hash = "7B0ABEA75B032D8FAF3BEE071A892E2864A31A8ECC42F7AA4300CC51B1CA1D5A"
+				},
+				Linux = new NodeOSDownloadData()
+				{
+					DownloadLink = "https://github.com/mikedennis/StratisBitcoinFullNode/releases/download/{0}/stratis-{0}-linux64.tgz",
+					Archive = "stratis-{0}-linux64.tgz",
+					Executable = "stratis-{0}-linux64/Stratis.StratisD",
+					Hash = "57965AA4034468ED4C9FDD6CDBAD8A1F722DDE6A6BCAE6291D79BF76C5FC644B"
+				},
+				Mac = new NodeOSDownloadData()
+				{
+					DownloadLink = "https://github.com/mikedennis/StratisBitcoinFullNode/releases/download/{0}/stratis-{0}-osx64.tgz",
+					Archive = "stratis-{0}-osx64.tgz",
+					Executable = "stratis-{0}-osx64/Stratis.StratisD",
+					Hash = "04C4F4EBCA494ABD6C29D834D86AFEA559BB8893A1E74BE849D050FEFC164C72"
+				},
+				SupportCookieFile = false,
+				AdditionalRegtestConfig = "defaultwalletname=default" + Environment.NewLine + "maxtipage=2147483647" + Environment.NewLine + "unlockdefaultwallet=1"
+			};
+		}
 
 		public static GoByteNodeDownloadData GoByte
 		{
@@ -903,6 +1016,21 @@
 		{
 			get; set;
 		} = new KotoNodeDownloadData();
+
+		public static BitcoinplusNodeDownloadData Bitcoinplus
+		{
+			get; set;
+		} = new BitcoinplusNodeDownloadData();
+
+		public static ChaincoinNodeDownloadData Chaincoin
+		{
+			get; set;
+		} = new ChaincoinNodeDownloadData();
+
+		public static StratisNodeDownloadData Stratis
+		{
+			get; set;
+		} = new StratisNodeDownloadData();
 
 		public bool UseSectionInConfigFile { get; private set; }
 		public string AdditionalRegtestConfig { get; private set; }

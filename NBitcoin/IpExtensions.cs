@@ -6,6 +6,7 @@ using System.Net;
 using System.Text;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using NBitcoin.DataEncoders;
 
 namespace NBitcoin
 {
@@ -15,6 +16,7 @@ namespace NBitcoin
 		interface ICompatibility
 		{
 			IPAddress MapToIPv6(IPAddress address);
+			IPAddress MapToIPv4(IPAddress address);
 			bool IsIPv4MappedToIPv6(IPAddress address);
 		}
 		class MonoCompatibility : ICompatibility
@@ -28,6 +30,11 @@ namespace NBitcoin
 			{
 				return Utils.MapToIPv6(address);
 			}
+
+			public IPAddress MapToIPv4(IPAddress address)
+			{
+				return Utils.MapToIPv4(address);
+			}
 		}
 		class WinCompatibility : ICompatibility
 		{
@@ -39,6 +46,10 @@ namespace NBitcoin
 			public IPAddress MapToIPv6(IPAddress address)
 			{
 				return address.MapToIPv6();
+			}
+			public IPAddress MapToIPv4(IPAddress address)
+			{
+				return address.MapToIPv4();
 			}
 		}
 		static ICompatibility _Compatibility;
@@ -205,6 +216,176 @@ namespace NBitcoin
 			var bytes = address.GetAddressBytes();
 			return ((Utils.ArrayEqual(bytes, 0, pchOnionCat, 0, pchOnionCat.Length) ? 0 : 1) == 0);
 		}
+		public static bool IsTor(this EndPoint endpoint)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (endpoint is IPEndPoint ip)
+				return ip.IsTor();
+			else if (endpoint is DnsEndPoint dns)
+				return dns.IsTor();
+			else
+				return false;
+		}
+		public static bool IsTor(this DnsEndPoint dnsEndPoint)
+		{
+			if (dnsEndPoint == null)
+				throw new ArgumentNullException(nameof(dnsEndPoint));
+			return dnsEndPoint.Host.EndsWith(".onion", StringComparison.OrdinalIgnoreCase);
+		}
+		public static bool IsTor(this IPEndPoint iPEndPoint)
+		{
+			if (iPEndPoint == null)
+				throw new ArgumentNullException(nameof(iPEndPoint));
+			return iPEndPoint.Address.IsTor();
+		}
+
+		/// <summary>
+		/// Return {host}:{port} of this endpoint.
+		/// </summary>
+		/// <param name="endpoint"></param>
+		/// <returns>{host}:{port} representation of this endpoint</returns>
+		public static string ToEndpointString(this EndPoint endpoint)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (endpoint is DnsEndPoint dns)
+			{
+				return $"{dns.Host}:{dns.Port}";
+			}
+			return endpoint.ToString();
+		}
+
+		/// <summary>
+		/// Convert an onion cat IPEndpoint to an onion DnsEndpoint
+		/// If endpoint is already an onion DnsEndpoint, return it.
+		/// Else returns null.
+		/// </summary>
+		/// <param name="endpoint"></param>
+		/// <returns>An onion DNS endpoint or null</returns>
+		public static DnsEndPoint AsOnionDNSEndpoint(this EndPoint endpoint)
+		{
+			TryConvertToOnionDNSEndpoint(endpoint, out var dns);
+			return dns;
+		}
+
+		/// <summary>
+		/// Convert an onion cat IPEndpoint to an onion DnsEndpoint
+		/// If endpoint is already an onion DnsEndpoint, return it.
+		/// If the endpoint is not an onion endpoint v2, return false.
+		/// </summary>
+		/// <param name="endpoint">The tor endpoint</param>
+		/// <param name="dnsEndpoint">The onion dns enpoint</param>
+		/// <returns>True if the onioncat address has been successfully parsed as a dns onion address</returns>
+		public static bool TryConvertToOnionDNSEndpoint(this EndPoint endpoint, out DnsEndPoint dnsEndpoint)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (endpoint is IPEndPoint ip)
+			{
+				var bytes = ip.Address.GetAddressBytes();
+				if (((Utils.ArrayEqual(bytes, 0, pchOnionCat, 0, pchOnionCat.Length) ? 0 : 1) != 0))
+				{
+					dnsEndpoint = null;
+					return false;
+				}
+				try
+				{
+					var onionHost = Encoders.Base32.EncodeData(bytes, pchOnionCat.Length, 16 - pchOnionCat.Length);
+					dnsEndpoint = new DnsEndPoint($"{onionHost}.onion", ip.Port);
+					return true;
+				}
+				catch
+				{
+					dnsEndpoint = null;
+					return false;
+				}
+			}
+			else if (endpoint is DnsEndPoint dns)
+			{
+				if (AsOnionCatIPEndpoint(dns) != null)
+				{
+					dnsEndpoint = dns;
+					return true;
+				}
+			}
+			dnsEndpoint = null;
+			return false;
+		}
+
+		/// <summary>
+		/// Convert an onion DNS endpoint to an onioncat IpEndpoint
+		/// If endpoint is already an onioncat IPEndpoint, return it.
+		/// Else returns null.
+		/// </summary>
+		/// <param name="endpoint"></param>
+		/// <returns></returns>
+		public static IPEndPoint AsOnionCatIPEndpoint(this EndPoint endpoint)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (endpoint is IPEndPoint ip)
+			{
+				if (!IsTor(ip.Address))
+					return null;
+				return ip;
+			}
+			if (endpoint is DnsEndPoint dns)
+			{
+				if (!dns.Host.EndsWith(".onion", StringComparison.OrdinalIgnoreCase) || dns.Host.Length != 16 + 6)
+					return null;
+				var ipArray = new byte[16];
+				try
+				{
+					var vchAddr = Encoders.Base32.DecodeData(dns.Host.Substring(0, dns.Host.Length - 6));
+					if (vchAddr.Length != 16 - pchOnionCat.Length)
+						return null;
+					Array.Copy(pchOnionCat, ipArray, pchOnionCat.Length);
+					Array.Copy(vchAddr, 0, ipArray, pchOnionCat.Length, vchAddr.Length);
+					return new IPEndPoint(new IPAddress(ipArray), dns.Port);
+				}
+				catch
+				{
+					return null;
+				}
+			}
+			return null;
+		}
+
+		/// <summary>
+		/// <para>Will properly convert <paramref name="endpoint"/> to IPEndpoint
+		/// If <paramref name="endpoint"/> is a DNSEndpoint is an onion host (Tor v2), it will be converted into onioncat address
+		/// else, a DNS resolution will be made and all resolved addresses will be returned</para>
+		/// <para>If <paramref name="endpoint"/> is a IPEndpoint, it will be returned as-is.</para>
+		/// You can pass any endpoint parsed by <see cref="NBitcoin.Utils.ParseEndpoint(string, int)"/>
+		/// </summary>
+		/// <param name="endpoint">The endpoint to convert to IPEndpoint</param>
+		/// <exception cref="System.ArgumentNullException">The endpoint is null</exception>
+		/// <exception cref="System.Net.Sockets.SocketException">An error is encountered when resolving the dns name.</exception>
+		/// <exception cref="System.NotSupportedException">The endpoint passed can't be converted into an Ip (eg. An onion host which is not TorV2)</exception>
+		public static async Task<IPEndPoint[]> ResolveToIPEndpointsAsync(this EndPoint endpoint)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (endpoint is IPEndPoint ip)
+			{
+				return new[] { ip };
+			}
+			else if (endpoint.AsOnionCatIPEndpoint() is IPEndPoint ip2)
+			{
+				return new[] { ip2 };
+			}
+			else if (endpoint is DnsEndPoint dns)
+			{
+				if (dns.IsTor())
+					throw new NotSupportedException($"{endpoint} is not a Tor v2 address, and can't be converted into an IPEndpoint");
+				var ips = await Dns.GetHostAddressesAsync(dns.Host).ConfigureAwait(false);
+				return ips.Select(i => new IPEndPoint(i, dns.Port)).ToArray();
+			}
+			else
+				throw new NotSupportedException(endpoint.ToString());
+		}
+
 		public static IPAddress EnsureIPv6(this IPAddress address)
 		{
 			if(address.AddressFamily == AddressFamily.InterNetworkV6)
@@ -225,15 +406,32 @@ namespace NBitcoin
 #if CLASSICDOTNET
 			return Compatibility.MapToIPv6(address);
 #else
-			return Utils.MapToIPv6(address);
+			return address.MapToIPv6();
 #endif
+		}
+		public static IPAddress MapToIPv4Ex(this IPAddress address)
+		{
+#if CLASSICDOTNET
+			return Compatibility.MapToIPv4(address);
+#else
+			return address.MapToIPv4();
+#endif
+		}
+		public static IPEndPoint MapToIPv6Ex(this IPEndPoint endpoint)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (endpoint.AddressFamily == AddressFamily.InterNetworkV6)
+				return endpoint;
+			var ipv6 = endpoint.Address.MapToIPv6Ex();
+			return new IPEndPoint(ipv6, endpoint.Port);
 		}
 		public static bool IsIPv4MappedToIPv6Ex(this IPAddress address)
 		{
 #if CLASSICDOTNET
 			return Compatibility.IsIPv4MappedToIPv6(address);
 #else
-			return Utils.IsIPv4MappedToIPv6(address);
+			return address.IsIPv4MappedToIPv6;
 #endif
 
 		}

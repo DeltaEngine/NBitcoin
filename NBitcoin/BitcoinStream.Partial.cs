@@ -271,7 +271,19 @@ namespace NBitcoin
 			ReadWriteArray(ref data);
 		}
 
-		
+		public void ReadWrite(ref HDFingerprint fingerPrint)
+		{
+#if HAS_SPAN
+			Span<byte> bytes = stackalloc byte[4];
+			fingerPrint.ToBytes(bytes);
+#else
+			var bytes = fingerPrint.ToBytes();
+#endif
+			ReadWrite(ref bytes);
+			if (!this.Serializing)
+				fingerPrint = new HDFingerprint(bytes);
+		}
+
 		public void ReadWrite(ref int[] data)
 		{
 			ReadWriteArray(ref data);
@@ -283,7 +295,7 @@ namespace NBitcoin
 		{
 			value = value ?? uint256.Zero;
 			_MutableUint256.Value = value;
-			this.ReadWrite(ref _MutableUint256);
+			_MutableUint256.ReadWrite(this);
 			value = _MutableUint256.Value;			
 		}
 
@@ -291,7 +303,7 @@ namespace NBitcoin
 		{
 			value = value ?? uint256.Zero;
 			_MutableUint256.Value = value;
-			this.ReadWrite(ref _MutableUint256);
+			_MutableUint256.ReadWrite(this);
 			value = _MutableUint256.Value;			
 		}
 

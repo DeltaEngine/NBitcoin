@@ -13,8 +13,16 @@ The best documentation available is our [eBook](https://programmingblockchain.gi
 You can also browse the API easily through [the API reference](https://metacosa.github.io/NBitcoin/api/index.html).
 
 # How to use ?
-With NuGet :
->**Install-Package NBitcoin** 
+
+In .NET Core:
+```bash
+dotnet add package NBitcoin
+```
+If using legacy .NET Framework in Visual Studio
+```bash
+Install-Package NBitcoin
+```
+You can also just use the `Manage NuGet Package` window on your project in Visual Studio.
 
 Go on the [NuGet website](https://www.nuget.org/packages/NBitcoin/) for more information.
 
@@ -24,7 +32,18 @@ The packages support:
 * With limited features: platforms supported by [.NET Standard 1.1](https://docs.microsoft.com/en-us/dotnet/articles/standard/library) (Windows Phone, Windows 8.0 apps).
 
 To compile it by yourself, you can git clone, open the project and hit the compile button in Visual Studio.
-How to get started ? Check out this article [on CodeProject](http://www.codeproject.com/Articles/768412/NBitcoin-The-most-complete-Bitcoin-port-Part-Crypt) for some basic Bitcoin operations, or [this Introduction to NBitcoin video](https://www.youtube.com/watch?v=X4ZwRWIF49w).
+
+
+ # How to get started? 
+ 
+ First, you need to understand Bitcoin, for this read:
+ * [Programming The Blockchain in C#](https://programmingblockchain.gitbooks.io/programmingblockchain/content/)
+
+ Once you get familiar with Bitcoin terminology with this book, follow up by reading:
+
+ * [NBitcoin documentation](https://github.com/NicolasDorier/NBitcoin.Docs/blob/master/README.md)
+
+ This will teach you how to use NBitcoin in a practical way.
 
 # How to use with Altcoins ?
 
@@ -139,12 +158,23 @@ NBitcoin notably includes:
 * Mnemonic code for generating deterministic keys ([BIP 39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki)), credits to [Thasshiznets](https://github.com/Thashiznets/BIP39.NET)
 * Hierarchical Deterministic Wallets ([BIP 32](https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki))
 * Payment URLs ([BIP 21](https://github.com/bitcoin/bips/blob/master/bip-0021.mediawiki))
+* Full Bitcoin P2P implementation with SOCKS5 support for connecting through Tor
 
 Please read our [ebook](https://programmingblockchain.gitbooks.io/programmingblockchain/content/) to understand the capabilities.
 
 NBitcoin is inspired by Bitcoin Core code but provides a simpler object oriented API (e.g., new Key().PubKey.Address.ToString() to generate a key and get the associated address). It relies on the BouncyCastle cryptography library instead of OpenSSL, yet replicates OpenSSL bugs to guarantee compatibility. NBitcoin also ports the integrality of Bitcoin Core unit tests with their original data in order to validate the compatibility of the two implementations.
 
 NBitcoin is licensed under the [MIT License](https://opensource.org/licenses/MIT) and we encourage you to use it to explore, learn, debug, play, share and create software for Bitcoin and with other Metaco services.
+
+## How to connect use a SOCKS5 proxy to connect to a Bitcoin node?
+
+Here an example which assume you run Tor with SOCKS5 proxy on port 9050.
+```csharp
+var connectionParameters = new NodeConnectionParameters();
+connectionParameters.TemplateBehaviors.Add(new SocksSettingsBehavior(Utils.ParseEndpoint("localhost", 9050)));
+Node node = await Node.ConnectAsync(Network.Main, "7xnmrhmkvptbcvpl.onion:8333", connectionParameters);
+node.VersionHandshake();
+```
 
 ## Some OSS projects using NBitcoin
 

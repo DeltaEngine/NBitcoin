@@ -21,6 +21,26 @@ namespace NBitcoin.Protocol
 	/// </summary>
 	public class AddressManager : IBitcoinSerializable
 	{
+		/// <summary>
+		/// Will properly convert a endpoint to IPEndpoint
+		/// If endpoint is a DNSEndpoint, a DNS resolution will be made and all addresses added
+		/// If endpoint is a DNSEndpoint for onion, it will be converted into onioncat address
+		/// If endpoint is an IPEndpoint it is added to AddressManager
+		/// </summary>
+		/// <param name="endpoint">The endpoint to add to the address manager</param>
+		/// <param name="source">The source which advertized this endpoint (default: IPAddress.Loopback)</param>
+		/// <returns></returns>
+		public async Task AddAsync(EndPoint endpoint, IPAddress source = null)
+		{
+			if (endpoint == null)
+				throw new ArgumentNullException(nameof(endpoint));
+			if (source == null)
+				source = IPAddress.Loopback;
+			foreach (var ip in (await endpoint.ResolveToIPEndpointsAsync().ConfigureAwait(false)))
+			{
+				Add(new NetworkAddress(ip), source);
+			}
+		}
 		internal class AddressInfo : IBitcoinSerializable
 		{
 			#region IBitcoinSerializable Members
@@ -1157,7 +1177,7 @@ namespace NBitcoin.Protocol
 					peers.AddRange(this.GetAddr());
 					if(peers.Count == 0)
 					{
-						PopulateTableWithDNSNodes(network, peers);
+						PopulateTableWithDNSNodes(network, peers).GetAwaiter().GetResult();
 						PopulateTableWithHardNodes(network, peers);
 						peers = new List<NetworkAddress>(peers.OrderBy(a => RandomUtils.GetInt32()));
 						if(peers.Count == 0)
@@ -1224,21 +1244,20 @@ namespace NBitcoin.Protocol
 			}
 		}
 
-		private static void PopulateTableWithDNSNodes(Network network, List<NetworkAddress> peers)
+		private static Task PopulateTableWithDNSNodes(Network network, List<NetworkAddress> peers)
 		{
-			peers.AddRange(network.DNSSeeds
-				.SelectMany(d =>
+			return Task.WhenAll(network.DNSSeeds
+				.Select(async dns =>
 				{
 					try
 					{
-						return d.GetAddressNodes();
+						return (await dns.GetAddressNodesAsync(network.DefaultPort).ConfigureAwait(false)).Select(o => new NetworkAddress(o)).ToArray();
 					}
-					catch(Exception)
+					catch
 					{
-						return new IPAddress[0];
+						return new NetworkAddress[0];
 					}
 				})
-				.Select(d => new NetworkAddress(d, network.DefaultPort))
 				.ToArray());
 		}
 

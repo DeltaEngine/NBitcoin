@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using NBitcoin.Crypto;
 using NBitcoin.Protocol;
@@ -108,13 +109,12 @@ namespace NBitcoin
 		/// <param name="key">Key used for hashing the datalements.</param>
 		/// <param name="data">Data elements to be computed in the list.</param>
 		/// <returns></returns>
-		internal static List<ulong> ConstructHashedSet(byte P, int n, uint m, byte[] key, IEnumerable<byte[]> data)
+		internal static ulong[] ConstructHashedSet(byte P, int n, uint m, byte[] key, IEnumerable<byte[]> data, int dataCount)
 		{
 			// N the number of items to be inserted into the set.
-			var dataArrayBytes = data as byte[][] ?? data.ToArray();
-
 			// The list of data item hashes.
-			var values = new List<ulong>();
+			var values = new ulong[dataCount];
+			var valuesIndex = 0;
 			var modP = 1UL << P;
 			var modNP = ((ulong)n) * m;
 			var nphi = modNP >> 32;
@@ -124,14 +124,14 @@ namespace NBitcoin
 			var k1 = BitConverter.ToUInt64(key, 8);
 
 			// Process the data items and calculate the 64 bits hash for each of them.			
-			foreach(var item in dataArrayBytes )
+			foreach(var item in data)
 			{
 				var hash = SipHash(k0, k1, item);
 				var value = FastReduction(hash, nphi, nplo);
-				values.Add(value);
+				values[valuesIndex++] = value;
 			}
 
-			values.Sort();
+			Array.Sort(values);
 			return values;
 		}
 
@@ -155,7 +155,20 @@ namespace NBitcoin
 		/// <returns>true if the element is in the filter, otherwise false.</returns>
 		public bool Match(byte[] data, byte[] key)
 		{
-			return MatchAny(new []{data}, key);
+			if (data == null)
+				throw new ArgumentNullException(nameof(data));
+			return MatchAny(new[] {data}, 1, key);
+		}
+
+		/// <summary>
+		/// Checks if any of the provided elements is in the filter.
+		/// </summary>
+		/// <param name="data">Data elements to check in the filter.</param>
+		/// <param name="key">Key used for hashing the data elements.</param>
+		/// <returns>true if at least one of the elements is in the filter, otherwise false.</returns>
+		public bool MatchAny(byte[][] data, byte[] key)
+		{
+			return MatchAny(data, data.Length, key);
 		}
 
 		/// <summary>
@@ -166,10 +179,35 @@ namespace NBitcoin
 		/// <returns>true if at least one of the elements is in the filter, otherwise false.</returns>
 		public bool MatchAny(IEnumerable<byte[]> data, byte[] key)
 		{
-			if (data == null || !data.Any())
-				throw new ArgumentException("data can not be null or empty array.", nameof(data));
+			if (data == null)
+				throw new ArgumentNullException(nameof(data));
+			if (data is byte[][] dataArray)
+			{
+				return MatchAny(dataArray, dataArray.Length, key);
+			}
+			else if (data is ICollection<byte[]> dataCollection)
+			{
+				return MatchAny(dataCollection, dataCollection.Count, key);
+			}
+			else
+			{
+				return MatchAny(data, data.Count(), key);
+			}
+		}
 
-			var hs = ConstructHashedSet(P, N, M, key, data);
+		/// <summary>
+		/// Checks if any of the provided elements is in the filter.
+		/// </summary>
+		/// <param name="data">Data elements to check in the filter.</param>
+		/// <param name="key">Key used for hashing the data elements.</param>
+		/// <returns>true if at least one of the elements is in the filter, otherwise false.</returns>
+		internal bool MatchAny(IEnumerable<byte[]> data, int dataCount, byte[] key)
+		{
+			if (data == null || dataCount == 0)
+				throw new ArgumentException("data can not be null or empty array.", nameof(data));
+			if (key == null)
+				throw new ArgumentNullException(nameof(key));
+			var hs = ConstructHashedSet(P, N, M, key, data, dataCount);
 
 			var lastValue1 = 0UL;
 			var lastValue2 = hs[0];
@@ -182,7 +220,7 @@ namespace NBitcoin
 			{
 				if (lastValue1 > lastValue2)
 				{
-					if (i < hs.Count)
+					if (i < hs.Length)
 					{
 						lastValue2 = hs[i];
 						i++;
@@ -271,6 +309,11 @@ namespace NBitcoin
 		/// included in a filter.
 		/// </summary>
 		class ByteArrayComparer : IEqualityComparer<byte[]> {
+			public static readonly ByteArrayComparer Instance = new ByteArrayComparer();
+			private ByteArrayComparer()
+			{
+
+			}
 			public bool Equals(byte[] a, byte[] b)
 			{
 				if (a.Length != b.Length) return false;
@@ -330,7 +373,7 @@ namespace NBitcoin
 		/// </summary>
 		public GolombRiceFilterBuilder()
 		{
-			_values = new HashSet<byte[]>(new ByteArrayComparer());
+			_values = new HashSet<byte[]>(ByteArrayComparer.Instance);
 		}
 
 		/// <summary>
@@ -398,7 +441,8 @@ namespace NBitcoin
 			if (scriptPubkey == null)
 				throw new ArgumentNullException(nameof(scriptPubkey));
 
-			_values.Add(scriptPubkey.ToBytes());
+			// Unsafe is OK because Script is readonly and we do not modify the arrays inside values
+			_values.Add(scriptPubkey.ToBytes(true));
 			return this;
 		}
 
@@ -418,12 +462,12 @@ namespace NBitcoin
 				if(op.PushData != null)
 					data.Add(op.PushData);
 				else if(op.Code == OpcodeType.OP_0)
-					data.Add(new byte[0]);
+					data.Add(EmptyBytes);
 			}
 			AddEntries(data);
 			return this;
 		}
-
+		static readonly byte[] EmptyBytes = new byte[0];
 		/// <summary>
 		/// Adds a witness stack to the list of elements that will be used for building the filter.
 		/// </summary>
@@ -447,7 +491,9 @@ namespace NBitcoin
 			if (outpoint == null)
 				throw new ArgumentNullException(nameof(outpoint));
 
-			_values.Add(outpoint.ToBytes());
+			MemoryStream ms = new MemoryStream(32 + 4);
+			outpoint.ReadWrite(new BitcoinStream(ms, true));
+			_values.Add(ms.ToArrayEfficient());
 			return this;
 		}
 
@@ -475,13 +521,13 @@ namespace NBitcoin
 		public GolombRiceFilter Build()
 		{
 			var n = _values.Count;
-			var hs = GolombRiceFilter.ConstructHashedSet(_p, n, _m, _key, _values);
+			var hs = GolombRiceFilter.ConstructHashedSet(_p, n, _m, _key, _values, _values.Count);
 			var filterData = Compress(hs, _p);
 
 			return new GolombRiceFilter(filterData, n, _p, _m);
 		}
 
-		private static byte[] Compress(List<ulong> values, byte P)
+		private static byte[] Compress(ulong[] values, byte P)
 		{
 			var bitStream = new BitStream();
 			var sw = new GRCodedStreamWriter(bitStream, P);

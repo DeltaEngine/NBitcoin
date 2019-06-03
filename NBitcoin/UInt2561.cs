@@ -1,13 +1,11 @@
 ﻿
 using System;
 using System.Linq;
-using System.IO;
 using NBitcoin.DataEncoders;
-using NBitcoin.Protocol;
 
 namespace NBitcoin
 {
-	public class uint256
+	public sealed class uint256 : IComparable<uint256>, IEquatable<uint256>, IComparable
 	{
 		public class MutableUint256 : IBitcoinSerializable
 		{
@@ -217,14 +215,14 @@ namespace NBitcoin
 				throw new FormatException("the byte array should be 32 bytes long");
 			}
 
-			pn0 = Utils.ToUInt32(bytes, 4 * 0, true);
-			pn1 = Utils.ToUInt32(bytes, 4 * 1, true);
-			pn2 = Utils.ToUInt32(bytes, 4 * 2, true);
-			pn3 = Utils.ToUInt32(bytes, 4 * 3, true);
-			pn4 = Utils.ToUInt32(bytes, 4 * 4, true);
-			pn5 = Utils.ToUInt32(bytes, 4 * 5, true);
-			pn6 = Utils.ToUInt32(bytes, 4 * 6, true);
-			pn7 = Utils.ToUInt32(bytes, 4 * 7, true);
+			pn0 = Utils.ToUInt32(bytes.Slice(0), true);
+			pn1 = Utils.ToUInt32(bytes.Slice(4 * 1), true);
+			pn2 = Utils.ToUInt32(bytes.Slice(4 * 2), true);
+			pn3 = Utils.ToUInt32(bytes.Slice(4 * 3), true);
+			pn4 = Utils.ToUInt32(bytes.Slice(4 * 4), true);
+			pn5 = Utils.ToUInt32(bytes.Slice(4 * 5), true);
+			pn6 = Utils.ToUInt32(bytes.Slice(4 * 6), true);
+			pn7 = Utils.ToUInt32(bytes.Slice(4 * 7), true);
 		}
 #endif
 
@@ -266,21 +264,37 @@ namespace NBitcoin
 		public override bool Equals(object obj)
 		{
 			var item = obj as uint256;
-			if(item == null)
+			return Equals(item);
+		}
+
+		public bool Equals(uint256 other)
+		{
+			if (other is null)
 			{
 				return false;
 			}
 
 			bool equals = true;
-			equals &= pn0 == item.pn0;
-			equals &= pn1 == item.pn1;
-			equals &= pn2 == item.pn2;
-			equals &= pn3 == item.pn3;
-			equals &= pn4 == item.pn4;
-			equals &= pn5 == item.pn5;
-			equals &= pn6 == item.pn6;
-			equals &= pn7 == item.pn7;
+			equals &= pn0 == other.pn0;
+			equals &= pn1 == other.pn1;
+			equals &= pn2 == other.pn2;
+			equals &= pn3 == other.pn3;
+			equals &= pn4 == other.pn4;
+			equals &= pn5 == other.pn5;
+			equals &= pn6 == other.pn6;
+			equals &= pn7 == other.pn7;
 			return equals;
+		}
+
+		public int CompareTo(uint256 other)
+		{
+			return Comparison(this, other);
+		}
+
+		public int CompareTo(object obj)
+		{
+			return obj is uint256 v ? CompareTo(v) :
+				   obj is null ? CompareTo(null as uint256) : throw new ArgumentException($"Object is not an instance of uint256", nameof(obj));
 		}
 
 		public static bool operator ==(uint256 a, uint256 b)
@@ -324,7 +338,13 @@ namespace NBitcoin
 
 		private static int Comparison(uint256 a, uint256 b)
 		{
-			if(a.pn7 < b.pn7)
+			if (a is null && b is null)
+				return 0;
+			if (a is null && !(b is null))
+				return -1;
+			if (!(a is null) && b is null)
+				return 1;
+			if (a.pn7 < b.pn7)
 				return -1;
 			if(a.pn7 > b.pn7)
 				return 1;
@@ -473,7 +493,7 @@ namespace NBitcoin
 			return hash;
 		}
 	}
-	public class uint160
+	public sealed class uint160 : IComparable<uint160>, IEquatable<uint160>, IComparable
 	{
 		public class MutableUint160 : IBitcoinSerializable
 		{
@@ -662,15 +682,31 @@ namespace NBitcoin
 		public override bool Equals(object obj)
 		{
 			var item = obj as uint160;
-			if(item == null)
+			return Equals(item);
+		}
+
+		public bool Equals(uint160 other)
+		{
+			if (other is null)
 				return false;
 			bool equals = true;
-			equals &= pn0 == item.pn0;
-			equals &= pn1 == item.pn1;
-			equals &= pn2 == item.pn2;
-			equals &= pn3 == item.pn3;
-			equals &= pn4 == item.pn4;
+			equals &= pn0 == other.pn0;
+			equals &= pn1 == other.pn1;
+			equals &= pn2 == other.pn2;
+			equals &= pn3 == other.pn3;
+			equals &= pn4 == other.pn4;
 			return equals;
+		}
+
+		public int CompareTo(uint160 other)
+		{
+			return Comparison(this, other);
+		}
+
+		public int CompareTo(object obj)
+		{
+			return obj is uint160 v ? CompareTo(v) :
+				   obj is null ? CompareTo(null as uint160) : throw new ArgumentException($"Object is not an instance of uint160", nameof(obj));
 		}
 
 		public static bool operator ==(uint160 a, uint160 b)
@@ -711,7 +747,13 @@ namespace NBitcoin
 
 		private static int Comparison(uint160 a, uint160 b)
 		{
-			if(a.pn4 < b.pn4)
+			if (a is null && b is null)
+				return 0;
+			if (a is null && !(b is null))
+				return -1;
+			if (!(a is null) && b is null)
+				return 1;
+			if (a.pn4 < b.pn4)
 				return -1;
 			if(a.pn4 > b.pn4)
 				return 1;

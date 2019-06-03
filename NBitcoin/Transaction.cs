@@ -47,26 +47,63 @@ namespace NBitcoin
 			}
 		}
 
+		public readonly static OutPoint Zero = new OutPoint(uint256.Zero, 0);
+
+		/// <summary>
+		/// Parse an outpoint with either the format:
+		/// [txid]:[outputindex]
+		/// [txid]-[outputindex]
+		/// [txid][outputindex] where outputindex is in hexadecimal, 4 bytes in little endian (serialization format)
+		/// </summary>
+		/// <param name="str">The string to parse</param>
+		/// <param name="result">The outpoint</param>
+		/// <returns>True if parsing succeed</returns>
 		public static bool TryParse(string str, out OutPoint result)
 		{
 			result = null;
 			if (str == null)
 				throw new ArgumentNullException("str");
-			var splitted = str.Split('-');
-			if (splitted.Length != 2)
-				return false;
 
+			uint index;
 			uint256 hash;
+
+			var splitted = str.Split(new[] { '-', ':' });
+			if (splitted.Length != 2)
+			{
+				// Let's check the serialization format
+				if (splitted.Length != 1)
+					return false;
+				if (splitted[0].Length != 32 * 2 + 4 * 2)
+					return false;
+				var outputIndex = splitted[0].Substring(32 * 2);
+				if (!HexEncoder.IsWellFormed(outputIndex))
+					return false;
+				index = Utils.ToUInt32(Encoders.Hex.DecodeData(outputIndex), true);
+				if (!uint256.TryParse(splitted[0].Substring(0, 32 * 2), out hash))
+					return false;
+				hash = new uint256(hash.ToBytes(), false);
+				result = new OutPoint(hash, index);
+				return true;
+			}
+
+			
 			if (!uint256.TryParse(splitted[0], out hash))
 				return false;
 
-			uint index;
 			if (!uint.TryParse(splitted[1], out index))
 				return false;
 			result = new OutPoint(hash, index);
 			return true;
 		}
 
+		/// <summary>
+		/// Parse an outpoint with either the format:
+		/// [txid]:[outputindex]
+		/// [txid]-[outputindex]
+		/// [txid][outputindex] where txid is little endian and outputindex is in hexadecimal, 4 bytes in little endian (serialization format)
+		/// </summary>
+		/// <param name="str">The string to parse</param>
+		/// <returns>The outpoint</returns>
 		public static OutPoint Parse(string str)
 		{
 			OutPoint result;
@@ -163,7 +200,7 @@ namespace NBitcoin
 
 		public override string ToString()
 		{
-			return Hash + "-" + N;
+			return $"{Hash}-{N}";
 		}
 	}
 
@@ -790,17 +827,6 @@ namespace NBitcoin
 			: base(parent)
 		{
 
-		}
-		public TxIn this[OutPoint outpoint]
-		{
-			get
-			{
-				return this[outpoint.N];
-			}
-			set
-			{
-				this[outpoint.N] = value;
-			}
 		}
 
 		/// <summary>
@@ -1712,6 +1738,12 @@ namespace NBitcoin
 			Sign(new[] { secret }, new[] { coin });
 		}
 
+		public virtual PSBT CreatePSBT()
+		{
+			var psbt = PSBT.FromTransaction(this);
+			return psbt;
+		}
+
 		/// <summary>
 		/// Sign a specific coin with the given secret
 		/// </summary>
@@ -1870,12 +1902,15 @@ namespace NBitcoin
 			if (IsCoinBase)
 				return Money.Zero;
 			spentCoins = spentCoins ?? new ICoin[0];
-
+			Dictionary<OutPoint, ICoin> coinsByOutpoint = new Dictionary<OutPoint, ICoin>();
+			foreach(var c in spentCoins)
+			{
+				coinsByOutpoint.TryAdd(c.Outpoint, c);
+			}
 			Money fees = -TotalOut;
 			foreach (var input in this.Inputs)
 			{
-				var coin = spentCoins.FirstOrDefault(s => s.Outpoint == input.PrevOut);
-				if (coin == null)
+				if (!coinsByOutpoint.TryGetValue(input.PrevOut, out var coin))
 					return null;
 				fees += coin.TxOut.Value;
 			}

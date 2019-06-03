@@ -1,5 +1,4 @@
 ﻿#if !NOJSONNET
-using NBitcoin.BIP174;
 using NBitcoin.DataEncoders;
 using NBitcoin.Protocol;
 using Newtonsoft.Json;
@@ -892,7 +891,7 @@ namespace NBitcoin.RPC
 
 			var response = await SendCommandAsync(RPCOperations.walletprocesspsbt, psbt.ToBase64(), sign, SigHashToString(sighashType), bip32derivs).ConfigureAwait(false);
 			var result = (JObject)response.Result;
-			var psbt2 = PSBT.Parse(result.Property("psbt").Value.Value<string>());
+			var psbt2 = PSBT.Parse(result.Property("psbt").Value.Value<string>(), Network.Main);
 			var complete = result.Property("complete").Value.Value<bool>();
 
 			return new WalletProcessPSBTResponse(psbt2, complete);
@@ -955,7 +954,7 @@ namespace NBitcoin.RPC
 				jOptions,
 				bip32derivs).ConfigureAwait(false);
 			var result = (JObject)response.Result;
-			var psbt = PSBT.Parse(result.Property("psbt").Value.Value<string>());
+			var psbt = PSBT.Parse(result.Property("psbt").Value.Value<string>(), Network.Main);
 			var fee = Money.Coins(result.Property("fee").Value.Value<decimal>());
 			var changePos = result.Property("changepos").Value.Value<int>();
 			var tmp = changePos == -1 ? (int?)null : (int?)changePos;

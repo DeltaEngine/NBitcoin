@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 
@@ -22,21 +23,58 @@ namespace NBitcoin
 		/// <returns></returns>
 		public static KeyPath Parse(string path)
 		{
-			var parts = path
+			return new KeyPath(path);
+		}
+
+		/// <summary>
+		/// Try Parse a KeyPath
+		/// </summary>
+		/// <param name="path">The KeyPath formated like 10/0/2'/3</param>
+		/// <param name="keyPath">The successfully parsed Key path</param>
+		/// <returns>True if the string is parsed successfully; otherwise false</returns>
+		public static bool TryParse(string path, out KeyPath keyPath)
+		{
+			bool isValid = true;
+			int count = 0;
+			var indices =
+				path
 				.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
 				.Where(p => p != "m")
-				.Select(ParseCore)
+				.Select(p =>
+				{
+					isValid &= TryParseCore(p, out var i);
+					count++;
+					if (count > 255)
+						isValid = false;
+					return i;
+				})
+				.Where(_ => isValid)
 				.ToArray();
-			return new KeyPath(parts);
+			if (!isValid)
+			{
+				keyPath = null;
+				return false;
+			}
+			keyPath = new KeyPath(indices);
+			return true;
 		}
 
 		public KeyPath(string path)
 		{
+			int count = 0;
 			_Indexes =
 				path
 				.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
 				.Where(p => p != "m")
-				.Select(ParseCore)
+				.Select(p =>
+				{
+					if (!TryParseCore(p, out var i))
+						throw new FormatException("KeyPath uncorrectly formatted");
+					count++;
+					if (count > 255)
+						throw new FormatException("KeyPath uncorrectly formatted");
+					return i;
+				})
 				.ToArray();
 		}
 
@@ -60,16 +98,37 @@ namespace NBitcoin
 		public byte[] ToBytes() =>
 			Indexes.Count() == 0 ? new byte[0] : Indexes.Select(i => Utils.ToBytes(i, true)).Aggregate((a, b) => a.Concat(b)).ToArray();
 
-		private static uint ParseCore(string i)
+		private static bool TryParseCore(string i, out uint index)
 		{
-			bool hardened = i.EndsWith("'");
+			if (i.Length == 0)
+			{
+				index = 0;
+				return false;
+			}
+			bool hardened = i[i.Length -1] == '\'' || i[i.Length - 1] == 'h';
 			var nonhardened = hardened ? i.Substring(0, i.Length - 1) : i;
-			var index = uint.Parse(nonhardened);
-			return hardened ? index | 0x80000000u : index;
+			if (!uint.TryParse(nonhardened, out index))
+				return false;
+			if (hardened)
+			{
+				if (index >= 0x80000000u)
+				{
+					index = 0;
+					return false;
+				}
+				index = index | 0x80000000u;
+				return true;
+			}
+			else
+			{
+				return true;
+			}
 		}
 
 		public KeyPath(params uint[] indexes)
 		{
+			if (indexes.Length > 255)
+				throw new ArgumentException(paramName: nameof(indexes), message: "A KeyPath should have at most 255 indices");
 			_Indexes = indexes;
 		}
 
@@ -87,6 +146,14 @@ namespace NBitcoin
 			get
 			{
 				return _Indexes.ToArray();
+			}
+		}
+
+		public int Length
+		{
+			get
+			{
+				return _Indexes.Length;
 			}
 		}
 
@@ -175,6 +242,9 @@ namespace NBitcoin
 			return hardened ? nonhardened + "'" : nonhardened.ToString(CultureInfo.InvariantCulture);
 		}
 
+		/// <summary>
+		/// True if the last index in the path is hardened
+		/// </summary>
 		public bool IsHardened
 		{
 			get
@@ -183,6 +253,63 @@ namespace NBitcoin
 					throw new InvalidOperationException("No index found in this KeyPath");
 				return (_Indexes[_Indexes.Length - 1] & 0x80000000u) != 0;
 			}
+		}
+
+		/// <summary>
+		/// Returns the longest non-hardened keypath to the leaf.
+		/// For example, if the keypath is "49'/0'/0'/1/23", then the address key path is "1/23"
+		/// </summary>
+		/// <returns>Return the address key path</returns>
+		public KeyPath GetAddressKeyPath()
+		{
+			List<uint> indexes = new List<uint>();
+			for (int i = Indexes.Length - 1; i >= 0; i--)
+			{
+				if (Indexes[i] >= 0x80000000U)
+					break;
+				indexes.Insert(0, Indexes[i]);
+			}
+			return new KeyPath(indexes.ToArray());
+		}
+
+		/// <summary>
+		/// Returns the longest hardened keypath from the root.
+		/// For example, if the keypath is "49'/0'/0'/1/23", then the account key path is "49'/0'/0'"
+		/// </summary>
+		/// <returns>Return the account key path</returns>
+		public KeyPath GetAccountKeyPath()
+		{
+			List<uint> indexes = new List<uint>();
+			for (int i = 0; i < Indexes.Length; i++)
+			{
+				if (Indexes[i] < 0x80000000U)
+					break;
+				indexes.Add(Indexes[i]);
+			}
+			return new KeyPath(indexes.ToArray());
+		}
+
+		/// <summary>
+		/// True if at least one index in the path is hardened
+		/// </summary>
+		public bool IsHardenedPath
+		{
+			get
+			{
+				return _Indexes.Any(i => (i & 0x80000000u) != 0);
+			}
+		}
+
+		public RootedKeyPath ToRootedKeyPath(IHDKey masterKey)
+		{
+			if (masterKey == null)
+				throw new ArgumentNullException(nameof(masterKey));
+			return ToRootedKeyPath(masterKey.GetPublicKey().GetHDFingerPrint());
+		}
+
+		public RootedKeyPath ToRootedKeyPath(HDFingerprint masterFingerprint)
+		{
+			return new RootedKeyPath(masterFingerprint, this);
 		}
 	}
 }

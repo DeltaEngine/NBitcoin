@@ -23,6 +23,112 @@ namespace NBitcoin
 {
 	public static class Extensions
 	{
+		/// <summary>
+		/// Deriving an HDKey is normally time consuming, this wrap the IHDKey in a new HD object which can cache derivations
+		/// </summary>
+		/// <param name="hdkey">The hdKey to wrap</param>
+		/// <returns>An hdkey which cache derivations, of the parameter if it is already itself a cache</returns>
+		public static IHDKey AsHDKeyCache(this IHDKey hdkey)
+		{
+			if (hdkey == null)
+				throw new ArgumentNullException(nameof(hdkey));
+			if (hdkey is HDKeyCache c)
+				return c;
+			return new HDKeyCache(hdkey);
+		}
+		/// <summary>
+		/// Deriving an IHDScriptPubKey is normally time consuming, this wrap the IHDScriptPubKey in a new IHDScriptPubKey object which can cache derivations
+		/// </summary>
+		/// <param name="hdScriptPubKey">The hdScriptPubKey to wrap</param>
+		/// <returns>An hdkey which cache derivations, of the parameter if it is already itself a cache</returns>
+		public static IHDScriptPubKey AsHDKeyCache(this IHDScriptPubKey hdScriptPubKey)
+		{
+			if (hdScriptPubKey == null)
+				throw new ArgumentNullException(nameof(hdScriptPubKey));
+			if (hdScriptPubKey is HDScriptPubKeyCache c)
+				return c;
+			return new HDScriptPubKeyCache(hdScriptPubKey);
+		}
+
+		public static IHDScriptPubKey AsHDScriptPubKey(this IHDKey hdKey, ScriptPubKeyType type)
+		{
+			if (hdKey == null)
+				throw new ArgumentNullException(nameof(hdKey));
+			return new HDKeyScriptPubKey(hdKey, type);
+		}
+
+		public static IHDKey Derive(this IHDKey hdkey, uint index)
+		{
+			if (hdkey == null)
+				throw new ArgumentNullException(nameof(hdkey));
+			return hdkey.Derive(new KeyPath(index));
+		}
+
+		/// <summary>
+		/// Derive keyPaths as fast as possible using caching and parallelism
+		/// </summary>
+		/// <param name="hdkey">The hdKey to derive</param>
+		/// <param name="keyPaths">keyPaths to derive</param>
+		/// <returns>An array of keyPaths.Length size with the derived keys</returns>
+		public static IHDKey[] Derive(this IHDKey hdkey, KeyPath[] keyPaths)
+		{
+			if (hdkey == null)
+				throw new ArgumentNullException(nameof(hdkey));
+			if (keyPaths == null)
+				throw new ArgumentNullException(nameof(keyPaths));
+			var result = new IHDKey[keyPaths.Length];
+			var cache = (HDKeyCache)hdkey.AsHDKeyCache();
+#if !NOPARALLEL
+			Parallel.For(0, keyPaths.Length, i =>
+			{
+				result[i] = hdkey.Derive(keyPaths[i]);
+			});
+#else
+			for (int i = 0; i < keyPaths.Length; i++)
+			{
+				result[i] = hdkey.Derive(keyPaths[i]);
+			}
+#endif
+			return result;
+		}
+		public static async Task WithCancellation(this Task task, CancellationToken cancellationToken)
+		{
+			using (var delayCTS = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+			{
+				var waiting = Task.Delay(-1, delayCTS.Token);
+				var doing = task;
+				if (await Task.WhenAny(waiting, doing).ConfigureAwait(false) == waiting)
+				{
+#pragma warning disable CS4014
+					// Need to handle potential exception unhandled later, the original exception is not yet finished
+					doing.ContinueWith(_ => _?.Exception?.Handle((e) => true));
+#pragma warning restore CS4014
+				}
+				delayCTS.Cancel();
+				cancellationToken.ThrowIfCancellationRequested();
+				await doing.ConfigureAwait(false);
+			}
+		}
+
+		public static async Task<T> WithCancellation<T>(this Task<T> task, CancellationToken cancellationToken)
+		{
+			using (var delayCTS = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+			{
+				var waiting = Task.Delay(-1, delayCTS.Token);
+				var doing = task;
+				if (await Task.WhenAny(waiting, doing).ConfigureAwait(false) == waiting)
+				{
+#pragma warning disable CS4014
+					// Need to handle potential exception unhandled later, the original exception is not yet finished
+					doing.ContinueWith(_ => _?.Exception?.Handle((e) => true));
+#pragma warning restore CS4014
+				}
+				delayCTS.Cancel();
+				cancellationToken.ThrowIfCancellationRequested();
+				return await doing.ConfigureAwait(false);
+			}
+		}
+
 		public static Block GetBlock(this IBlockRepository repository, uint256 blockId)
 		{
 			return repository.GetBlockAsync(blockId).GetAwaiter().GetResult();
@@ -449,6 +555,18 @@ namespace NBitcoin
 			return new IPAddress(ipv6Bytes);
 
 		}
+		internal static IPAddress MapToIPv4(IPAddress address)
+		{
+			if (address.AddressFamily == AddressFamily.InterNetwork)
+				return address;
+			if (address.AddressFamily != AddressFamily.InterNetworkV6)
+				throw new Exception("Only AddressFamily.InterNetworkV6 can be converted to IPv4");
+			if (!address.IsIPv4MappedToIPv6Ex())
+				throw new Exception("This is not a mapped IPv4");
+			byte[] ipv6Bytes = address.GetAddressBytes();
+			return new IPAddress(new[] { ipv6Bytes[12], ipv6Bytes[13], ipv6Bytes[14], ipv6Bytes[15] });
+
+		}
 
 		internal static bool IsIPv4MappedToIPv6(IPAddress address)
 		{
@@ -738,21 +856,21 @@ namespace NBitcoin
 			}
 		}
 #if HAS_SPAN
-		public static uint ToUInt32(ReadOnlySpan<byte> value, int index, bool littleEndian)
+		public static uint ToUInt32(ReadOnlySpan<byte> value, bool littleEndian)
 		{
 			if(littleEndian)
 			{
-				return value[index]
-					   + ((uint)value[index + 1] << 8)
-					   + ((uint)value[index + 2] << 16)
-					   + ((uint)value[index + 3] << 24);
+				return value[0]
+					   + ((uint)value[1] << 8)
+					   + ((uint)value[2] << 16)
+					   + ((uint)value[3] << 24);
 			}
 			else
 			{
-				return value[index + 3]
-					   + ((uint)value[index + 2] << 8)
-					   + ((uint)value[index + 1] << 16)
-					   + ((uint)value[index + 0] << 24);
+				return value[3]
+					   + ((uint)value[2] << 8)
+					   + ((uint)value[1] << 16)
+					   + ((uint)value[0] << 24);
 			}
 		}
 #endif
@@ -795,6 +913,61 @@ namespace NBitcoin
 
 
 #if !NOSOCKET
+
+		public static bool TryParseEndpoint(string hostPort, int defaultPort, out EndPoint endpoint)
+		{
+			if (hostPort == null)
+				throw new ArgumentNullException(nameof(hostPort));
+			if (defaultPort < 0 || defaultPort > ushort.MaxValue)
+				throw new ArgumentOutOfRangeException(nameof(defaultPort));
+			hostPort = hostPort.Trim();
+			endpoint = null;
+			ushort port = (ushort)defaultPort;
+			string host = hostPort;
+			var index = hostPort.LastIndexOf(':');
+			if (index != -1)
+			{
+				var index2 = hostPort.IndexOf(':');
+				if (index2 == index || hostPort.IndexOf(']') != -1)
+				{
+					var portStr = hostPort.Substring(index + 1);
+					if (ushort.TryParse(portStr, out port))
+					{
+						host = hostPort.Substring(0, index);
+					}
+					else
+					{
+						port = (ushort)defaultPort;
+					}
+				}
+				else // At least two ':', this should be considered IPv6 without port
+				{
+					port = (ushort)defaultPort;
+				}
+			}
+			if (IPAddress.TryParse(host, out var address))
+			{
+				endpoint = new IPEndPoint(address, port);
+			}
+			else
+			{
+				if (Uri.CheckHostName(host) != UriHostNameType.Dns ||
+					// An host name with a length higher than 255 can't be resolved by DNS
+					host.Length > 255)
+					return false;
+				endpoint = new DnsEndPoint(host, port);
+			}
+			return true;
+		}
+
+		public static EndPoint ParseEndpoint(string hostPort, int defaultPort)
+		{
+			if (!TryParseEndpoint(hostPort, defaultPort, out var endpoint))
+				throw new FormatException("Invalid IP or DNS endpoint");
+			return endpoint;
+		}
+
+		[Obsolete("Use TryParseEndpoint or ParseEndpoint instead")]
 		public static IPEndPoint ParseIpEndpoint(string endpoint, int defaultPort)
 		{
 			return ParseIpEndpoint(endpoint, defaultPort, true);

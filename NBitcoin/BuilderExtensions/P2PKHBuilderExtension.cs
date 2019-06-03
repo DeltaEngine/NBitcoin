@@ -62,7 +62,12 @@ namespace NBitcoin.BuilderExtensions
 			if(key == null)
 				return null;
 			var sig = signer.Sign(key);
-			return PayToPubkeyHashTemplate.Instance.GenerateScriptSig(sig, key.PubKey);
+			return PayToPubkeyHashTemplate.Instance.GenerateScriptSig(sig, key);
+		}
+
+		public override bool IsCompatibleKey(PubKey publicKey, Script scriptPubKey)
+		{
+			return publicKey.Hash.ScriptPubKey == scriptPubKey;
 		}
 	}
 }
