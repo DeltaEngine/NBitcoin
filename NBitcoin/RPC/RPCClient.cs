@@ -29,32 +29,32 @@ namespace NBitcoin.RPC
 
 		------------------ P2P networking
 		network			getnetworkinfo
-		network			addnode					  Yes
+		network			addnode						Yes
 		network			disconnectnode
-		network			getaddednodeinfo			 Yes
+		network			getaddednodeinfo			Yes
 		network			getconnectioncount
 		network			getnettotals
-		network			getpeerinfo				  Yes
+		network			getpeerinfo					Yes
 		network			ping
 		network			setban
 		network			listbanned
 		network			clearbanned
 
 		------------------ Block chain and UTXO
-		blockchain		 getblockchaininfo			Yes
-		blockchain		 getbestblockhash			 Yes
-		blockchain		 getblockcount				Yes
-		blockchain		 getblock					 Yes
-		blockchain		 getblockhash				 Yes
-		blockchain		 getchaintips
-		blockchain		 getdifficulty
-		blockchain		 getmempoolinfo
-		blockchain		 getrawmempool				Yes
-		blockchain		 gettxout					Yes
-		blockchain		 gettxoutproof
-		blockchain		 verifytxoutproof
-		blockchain		 gettxoutsetinfo
-		blockchain		 verifychain
+		blockchain		getblockchaininfo			Yes
+		blockchain		getbestblockhash			Yes
+		blockchain		getblockcount				Yes
+		blockchain		getblock					Yes
+		blockchain		getblockhash				Yes
+		blockchain		getchaintips
+		blockchain		getdifficulty
+		blockchain		getmempoolinfo
+		blockchain		getrawmempool				Yes
+		blockchain		gettxout					Yes
+		blockchain		gettxoutproof
+		blockchain		verifytxoutproof
+		blockchain		gettxoutsetinfo				Yes
+		blockchain		verifychain
 
 		------------------ Mining
 		mining			 getblocktemplate
@@ -88,8 +88,8 @@ namespace NBitcoin.RPC
 		util			createmultisig
 		util			validateaddress
 		util			verifymessage
-		util			estimatefee				  Yes
-		util			estimatesmartfee			  Yes
+		util			estimatefee					Yes
+		util			estimatesmartfee			Yes
 		------------------ Not shown in help
 		hidden			invalidateblock				Yes
 		hidden			reconsiderblock
@@ -98,8 +98,8 @@ namespace NBitcoin.RPC
 
 		------------------ Wallet
 		wallet			 addmultisigaddress
-		wallet			 backupwallet				 Yes
-		wallet			 dumpprivkey				  Yes
+		wallet			 backupwallet				Yes
+		wallet			 dumpprivkey				Yes
 		wallet			 dumpwallet
 		wallet			 encryptwallet
 		wallet			 getaccountaddress			Yes
@@ -117,15 +117,15 @@ namespace NBitcoin.RPC
 		wallet			 importwallet
 		wallet			 importaddress				Yes
 		wallet			 keypoolrefill
-		wallet			 listaccounts				 Yes
-		wallet			 listaddressgroupings		 Yes
+		wallet			 listaccounts				Yes
+		wallet			 listaddressgroupings		Yes
 		wallet			 listlockunspent
 		wallet			 listreceivedbyaccount
 		wallet			 listreceivedbyaddress
 		wallet			 listsinceblock
 		wallet			 listtransactions
-		wallet			 listunspent				  Yes
-		wallet			 lockunspent				  Yes
+		wallet			 listunspent				Yes
+		wallet			 lockunspent				Yes
 		wallet			 move
 		wallet			 sendfrom
 		wallet			 sendmany
@@ -135,7 +135,7 @@ namespace NBitcoin.RPC
 		wallet			 signmessage
 		wallet			 walletlock
 		wallet			 walletpassphrasechange
-		wallet			 walletpassphrase			yes
+		wallet			 walletpassphrase			Yes
 		wallet			 walletprocesspsbt
 		wallet			 walletcreatefundedpsbt
 	*/
@@ -151,7 +151,7 @@ namespace NBitcoin.RPC
 			return $"{credentials.UserName}:{salt}${Encoders.Hex.EncodeData(result)}";
 		}
 
-		private static Lazy<HttpClient> _Shared = new Lazy<HttpClient>(() => new HttpClient());
+		private static Lazy<HttpClient> _Shared = new Lazy<HttpClient>(() => new HttpClient() { Timeout = System.Threading.Timeout.InfiniteTimeSpan });
 
 		HttpClient _HttpClient;
 		public HttpClient HttpClient
@@ -1181,6 +1181,11 @@ namespace NBitcoin.RPC
 			return blockchainInfo;
 		}
 
+		public BlockchainInfo GetBlockchainInfo()
+		{
+			return GetBlockchainInfoAsync().Result;
+		}
+
 		public uint256 GetBestBlockHash()
 		{
 			return uint256.Parse((string)SendCommand(RPCOperations.getbestblockhash).Result);
@@ -1416,6 +1421,33 @@ namespace NBitcoin.RPC
 		}
 
 		/// <summary>
+		/// Returns statistics about the unspent transaction output (UTXO) set
+		/// </summary>
+		/// <returns>Parsed object containing all info</returns>
+		public GetTxOutSetInfoResponse GetTxoutSetInfo()
+		{
+			return GetTxoutSetInfoAsync().GetAwaiter().GetResult();
+		}
+
+		public async Task<GetTxOutSetInfoResponse> GetTxoutSetInfoAsync()
+		{
+			var response = await SendCommandAsync(RPCOperations.gettxoutsetinfo).ConfigureAwait(false);
+
+			var result = response.Result;
+			return new GetTxOutSetInfoResponse
+			{
+				Height = result.Value<int>("height"),
+				Bestblock = uint256.Parse(result.Value<string>("bestblock")),
+				Transactions = result.Value<int>("transactions"),
+				Txouts = result.Value<long>("txouts"),
+				Bogosize = result.Value<long>("bogosize"),
+				HashSerialized2 = result.Value<string>("hash_serialized_2"),
+				DiskSize = result.Value<long>("disk_size"),
+				TotalAmount = Money.FromUnit(result.Value<decimal>("total_amount"), MoneyUnit.BTC)
+			};
+		}
+
+		/// <summary>
 		/// GetTransactions only returns on txn which are not entirely spent unless you run bitcoinq with txindex=1.
 		/// </summary>
 		/// <param name="blockHash"></param>
@@ -1534,7 +1566,7 @@ namespace NBitcoin.RPC
 				Transaction = ParseTxHex(json.Value<string>("hex")),
 				TransactionId = uint256.Parse(json.Value<string>("txid")),
 				TransactionTime = json["time"] != null ? NBitcoin.Utils.UnixTimeToDateTime(json.Value<long>("time")) : (DateTimeOffset?)null,
-				Hash = uint256.Parse(json.Value<string>("hash")),
+				Hash = json["hash"] is JToken token ? uint256.Parse(token.Value<string>()) : null,
 				Size = json.Value<uint>("size"),
 				VirtualSize = json.Value<uint>("vsize"),
 				Version = json.Value<uint>("version"),
